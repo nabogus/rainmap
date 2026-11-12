@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RainMap | แผนที่ฝน</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="tabs" role="tablist">
+    <button class="tab active" data-page="now" role="tab">ฝนตอนนี้</button>
+    <button class="tab" data-page="fc" role="tab">ฝนคาดการณ์ 15 วัน</button>
+  </div>
+  <div class="note">ข้อมูลประกอบการตัดสินใจ (ทดลอง) | ไม่ใช่ประกาศเตือนภัย</div>
+</header>
+
+<section id="page-now" class="page active">
+  <div class="ctrl">
+    <div class="row">
+      <button id="nowPrev" class="btn" title="ก่อนหน้า">&#9664;</button>
+      <button id="nowPlay" class="btn play" title="เล่น">&#9654;</button>
+      <button id="nowNext" class="btn" title="ถัดไป">&#9654;</button>
+      <div class="when">
+        <div id="nowTime" class="big">--:--</div>
+        <div id="nowKind" class="small">กำลังโหลด</div>
+      </div>
+      <div id="nowBadge" class="badge">สด</div>
+    </div>
+    <div class="slider-wrap">
+      <div class="slider-lbl"><span>ย้อนหลัง 2 ชม.</span><span class="fc">คาดการณ์ 2 ชม.</span></div>
+      <input id="nowSlider" type="range" min="0" max="0" value="0" step="1">
+      <div id="nowTicks" class="ticks"></div>
+    </div>
+  </div>
+</section>
+
+<section id="page-fc" class="page">
+  <div class="ctrl">
+    <div class="row">
+      <div class="seg" id="fcWin">
+        <button data-w="1">1 วัน</button>
+        <button data-w="3" class="active">3 วัน</button>
+        <button data-w="7">7 วัน</button>
+        <button data-w="15">15 วัน</button>
+      </div>
+      <div class="when">
+        <div id="fcTime" class="big">--</div>
+        <div id="fcKind" class="small">กำลังโหลด</div>
+      </div>
+    </div>
+    <div class="slider-wrap">
+      <div class="slider-lbl"><span>วันเริ่ม</span><span id="fcTotal" class="fc"></span></div>
+      <input id="fcSlider" type="range" min="0" max="14" value="0" step="1">
+      <div id="fcTicks" class="ticks"></div>
+    </div>
+  </div>
+</section>
+
+<div id="map"></div>
+
+<div id="legend" class="legend"></div>
+<footer id="foot" class="foot"></footer>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="app.js"></script>
+</body>
+</html>
