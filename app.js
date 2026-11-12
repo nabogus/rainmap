@@ -14,26 +14,34 @@
 
   // ---------- แผนที่ ----------
   const map = L.map('map', { zoomControl: true, attributionControl: true }).setView([13.5, 101], 6);
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 12,
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-  }).addTo(map);
+  const OSM_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+  const basemaps = {
+    'แผนที่ถนน (OSM)': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 12, attribution: OSM_ATTR }),
+    'ภูมิประเทศ': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 12, subdomains: 'abc', attribution: OSM_ATTR + ' | SRTM | &copy; <a href="https://opentopomap.org">OpenTopoMap</a>' }),
+    'ดาวเทียม': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 12, attribution: 'Tiles &copy; Esri' }),
+    'โทนมืด': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', { maxZoom: 12, attribution: 'Tiles &copy; Esri' }),
+  };
+  basemaps['แผนที่ถนน (OSM)'].addTo(map);
+  const rainGroup = L.layerGroup().addTo(map);            // ชั้นฝน เปิดปิดได้จาก layer control
+  const borders = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', { maxZoom: 12, opacity: 0.9, attribution: 'Esri' });
+  L.control.layers(basemaps, { 'ชั้นฝน': rainGroup, 'ชื่อเมือง / เส้นเขต (สำหรับดาวเทียม)': borders }, { position: 'topright', collapsed: true }).addTo(map);
   const cornersToBounds = (c) => L.latLngBounds([c[2][1], c[0][0]], [c[0][1], c[1][0]]); // [[W,N],[E,N],[E,S],[W,S]]
 
   let overlay = null;
   function showImage(url, bounds, opacity) {
-    if (!overlay) { overlay = L.imageOverlay(url, bounds, { opacity, interactive: false, className: 'rain-img' }).addTo(map); return; }
+    if (!overlay) { overlay = L.imageOverlay(url, bounds, { opacity, interactive: false, className: 'rain-img' }).addTo(rainGroup); return; }
     overlay.setBounds(bounds); overlay.setOpacity(opacity); overlay.setUrl(url);
   }
-  function clearImage() { if (overlay) { overlay.remove(); overlay = null; } }
+  function clearImage() { if (overlay) { rainGroup.removeLayer(overlay); overlay = null; } }
 
-  function legend(title, levels, colors, unit) {
+  function legend(title, levels, colors, unit, note) {
     const el = $('legend');
     let h = `<div class="t">${title}</div>`;
     for (let i = levels.length - 1; i >= 0; i--) {
       const c = colors[i];
       h += `<div class="r"><span class="sw" style="background:rgb(${c.join(',')})"></span>${i === levels.length - 1 ? '&ge; ' + levels[i] : levels[i] + ' - ' + levels[i + 1]} ${unit}</div>`;
     }
+    if (note) h += `<div class="n">${note}</div>`;
     el.innerHTML = h;
   }
 
@@ -106,6 +114,16 @@
   const merc = (lat) => Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360));
   const unmerc = (y) => (Math.atan(Math.exp(y)) * 360) / Math.PI - 90;
 
+  // สีไล่ต่อเนื่องตามระดับ acc (มม.): ต่ำกว่าระดับแรกจางหายไป
+  function accRamp(v, lv) {
+    if (v < lv[0] * 0.5) return null;
+    if (v < lv[0]) { const c = ACC_COLORS[0]; return [c[0], c[1], c[2], Math.round(((v - lv[0] * 0.5) / (lv[0] * 0.5)) * 100)]; }
+    let i = 0; while (i < lv.length - 1 && v >= lv[i + 1]) i++;
+    if (i >= lv.length - 1) { const c = ACC_COLORS[lv.length - 1]; return [c[0], c[1], c[2], 205]; }
+    const t = (v - lv[i]) / (lv[i + 1] - lv[i]), a = ACC_COLORS[i], b = ACC_COLORS[i + 1];
+    return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, 100 + 105 * Math.min(1, (i + t) / 3)];
+  }
+
   function fcImage(win, start) {
     const key = win + ':' + start;
     if (fc.cache.has(key)) return fc.cache.get(key);
@@ -115,20 +133,24 @@
       const off = d * nx * ny;
       for (let i = 0; i < nx * ny; i++) { const v = fc.data[off + i]; if (v !== g.nodata) acc[i] += v * g.scale; }
     }
-    const S = g.lat0 - g.dlat / 2, N = g.lat0 + (ny - 1) * g.dlat + g.dlat / 2;
-    const PX = 6, W = nx * PX, H = ny * PX;
+    // วาดด้วย bilinear interpolation ระหว่างจุดกริด 0.25 องศา (ค่าระหว่างจุดเป็นค่าประมาณ)
+    const S = g.lat0 - g.dlat / 2, N = g.lat0 + (ny - 1) * g.dlat + g.dlat / 2, Wl = g.lon0 - g.dlon / 2;
+    const PX = 16, W = nx * PX, H = ny * PX;
     const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
     const ctx = cv.getContext('2d'), im = ctx.createImageData(W, H), px = im.data;
     const yN = merc(N), yS = merc(S);
+    const at = (r, c) => acc[Math.max(0, Math.min(ny - 1, r)) * nx + Math.max(0, Math.min(nx - 1, c))];
     for (let y = 0; y < H; y++) {
       const lat = unmerc(yN - ((y + 0.5) / H) * (yN - yS));
-      const r = Math.max(0, Math.min(ny - 1, Math.round((lat - g.lat0) / g.dlat)));
+      const fr = (lat - g.lat0) / g.dlat, r0 = Math.floor(fr), tr = fr - r0;
       for (let x = 0; x < W; x++) {
-        const c = Math.floor(x / PX), v = acc[r * nx + c];
-        let k = -1; for (let i = 0; i < lv.length; i++) if (v >= lv[i]) k = i;
-        if (k < 0) continue;
-        const col = ACC_COLORS[k], p = (y * W + x) * 4;
-        px[p] = col[0]; px[p + 1] = col[1]; px[p + 2] = col[2]; px[p + 3] = 190;
+        const lon = Wl + ((x + 0.5) / W) * (nx * g.dlon);
+        const fcc = (lon - g.lon0) / g.dlon, c0 = Math.floor(fcc), tc = fcc - c0;
+        const v = (at(r0, c0) * (1 - tc) + at(r0, c0 + 1) * tc) * (1 - tr) + (at(r0 + 1, c0) * (1 - tc) + at(r0 + 1, c0 + 1) * tc) * tr;
+        const col = accRamp(v, lv);
+        if (!col) continue;
+        const p = (y * W + x) * 4;
+        px[p] = col[0]; px[p + 1] = col[1]; px[p + 2] = col[2]; px[p + 3] = col[3];
       }
     }
     ctx.putImageData(im, 0, 0);
@@ -162,7 +184,7 @@
     $('fcTicks').innerHTML = `<b>วันนี้</b><span>${fmtDate(fc.days[Math.floor(nd / 2)])}</span><span>${fmtDate(fc.days[nd - 1])}</span>`;
     $('fcTotal').textContent = `${fmtDate(fc.days[0])} ถึง ${fmtDate(fc.days[nd - 1])}`;
   }
-  function fcShow() { legend('ฝนสะสม (มม.)', fc.meta.levels.acc, ACC_COLORS, ''); fcRender(); }
+  function fcShow() { legend('ฝนสะสม (มม.)', fc.meta.levels.acc, ACC_COLORS, '', 'ไล่สีระหว่างจุดกริด 0.25 องศา (ค่าประมาณ)'); fcRender(); }
 
   document.querySelectorAll('#fcWin button').forEach((b) => { b.onclick = () => { fc.win = +b.dataset.w; fcRender(); }; });
   $('fcSlider').oninput = (e) => { fc.start = +e.target.value; fcRender(); };

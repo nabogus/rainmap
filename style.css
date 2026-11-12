@@ -41,6 +41,7 @@ input[type=range]{width:100%;margin:6px 0 2px}
   padding:8px 10px;font-size:12px;min-width:120px}
 .legend .t{font-weight:600;margin-bottom:4px}
 .legend .r{display:flex;align-items:center;gap:6px;line-height:1.5}
+.legend .n{margin-top:4px;font-size:10px;color:var(--mute);max-width:150px}
 .legend .sw{width:18px;height:12px;border-radius:2px;border:1px solid rgba(0,0,0,.15)}
 .foot{font-size:11px;color:var(--mute);padding:4px 12px 8px;background:var(--panel);border-top:1px solid var(--line)}
 .leaflet-container{font:inherit}
