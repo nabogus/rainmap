@@ -117,11 +117,11 @@
   // สีไล่ต่อเนื่องตามระดับ acc (มม.): ต่ำกว่าระดับแรกจางหายไป
   function accRamp(v, lv) {
     if (v < lv[0] * 0.5) return null;
-    if (v < lv[0]) { const c = ACC_COLORS[0]; return [c[0], c[1], c[2], Math.round(((v - lv[0] * 0.5) / (lv[0] * 0.5)) * 100)]; }
+    if (v < lv[0]) { const c = ACC_COLORS[0]; return [c[0], c[1], c[2], Math.round(((v - lv[0] * 0.5) / (lv[0] * 0.5)) * 70)]; }
     let i = 0; while (i < lv.length - 1 && v >= lv[i + 1]) i++;
     if (i >= lv.length - 1) { const c = ACC_COLORS[lv.length - 1]; return [c[0], c[1], c[2], 205]; }
     const t = (v - lv[i]) / (lv[i + 1] - lv[i]), a = ACC_COLORS[i], b = ACC_COLORS[i + 1];
-    return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, 100 + 105 * Math.min(1, (i + t) / 3)];
+    return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, 70 + 135 * Math.min(1, (i + t) / 3)];
   }
 
   function fcImage(win, start) {
@@ -149,8 +149,11 @@
         const v = (at(r0, c0) * (1 - tc) + at(r0, c0 + 1) * tc) * (1 - tr) + (at(r0 + 1, c0) * (1 - tc) + at(r0 + 1, c0 + 1) * tc) * tr;
         const col = accRamp(v, lv);
         if (!col) continue;
+        // เฟดขอบกริด 3 ช่อง (0.75 องศา) ไม่ให้เห็นเป็นกรอบสี่เหลี่ยม (ข้อมูล GFS ที่ต้นทางตัดมาแค่กรอบนี้)
+        const ex = Math.min(fcc + 0.5, nx - 0.5 - fcc), ey = Math.min(fr + 0.5, ny - 0.5 - fr);
+        const edge = Math.max(0, Math.min(1, Math.min(ex, ey) / 3));
         const p = (y * W + x) * 4;
-        px[p] = col[0]; px[p + 1] = col[1]; px[p + 2] = col[2]; px[p + 3] = col[3];
+        px[p] = col[0]; px[p + 1] = col[1]; px[p + 2] = col[2]; px[p + 3] = Math.round(col[3] * edge * edge);
       }
     }
     ctx.putImageData(im, 0, 0);
