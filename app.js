@@ -37,16 +37,27 @@
   }
   function clearImage() { if (overlay) { rainGroup.removeLayer(overlay); overlay = null; } }
 
+  // legend หุบได้: แตะหัวข้อเพื่อหุบ/กาง และจำสถานะไว้
+  let legendCollapsed = false;
+  try { legendCollapsed = localStorage.getItem('rainmap.legend') === '0'; } catch (e) { /* ใช้ค่าเริ่มต้น */ }
   function legend(title, levels, colors, unit, note) {
     const el = $('legend');
-    let h = `<div class="t">${title}</div>`;
+    let h = `<button type="button" class="t" aria-expanded="${!legendCollapsed}" title="แตะเพื่อหุบ/กาง">${title}<span class="chev" aria-hidden="true"></span></button><div class="body">`;
     for (let i = levels.length - 1; i >= 0; i--) {
       const c = colors[i];
       h += `<div class="r"><span class="sw" style="background:rgb(${c.join(',')})"></span>${i === levels.length - 1 ? '&ge; ' + levels[i] : levels[i] + ' - ' + levels[i + 1]} ${unit}</div>`;
     }
     if (note) h += `<div class="n">${note}</div>`;
-    el.innerHTML = h;
+    el.innerHTML = h + '</div>';
+    el.classList.toggle('collapsed', legendCollapsed);
   }
+  $('legend').addEventListener('click', (e) => {
+    if (!e.target.closest('.t')) return;
+    legendCollapsed = !legendCollapsed;
+    try { localStorage.setItem('rainmap.legend', legendCollapsed ? '0' : '1'); } catch (err) { /* ข้ามได้ */ }
+    $('legend').classList.toggle('collapsed', legendCollapsed);
+    $('legend').querySelector('.t').setAttribute('aria-expanded', String(!legendCollapsed));
+  });
 
   // ---------- หน้า ฝนตอนนี้ ----------
   // มี 2 แหล่ง: region = เรดาร์รวมทั้งภูมิภาค (RainViewer) + คาดการณ์ที่คำนวณเองใน nowcast.js

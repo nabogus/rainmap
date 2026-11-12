@@ -39,7 +39,13 @@ input[type=range]{width:100%;margin:6px 0 2px}
 #map{flex:1;min-height:300px;margin:0 12px 10px;border-radius:var(--radius);box-shadow:var(--shadow);z-index:1}
 .legend{position:fixed;right:20px;bottom:44px;z-index:600;background:rgba(255,255,255,.95);border-radius:8px;box-shadow:var(--shadow);
   padding:8px 10px;font-size:12px;min-width:120px}
-.legend .t{font-weight:600;margin-bottom:4px}
+.legend .t{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;border:0;background:none;padding:0;margin:0 0 4px;
+  font:inherit;font-weight:600;color:inherit;cursor:pointer;text-align:left}
+.legend .chev{width:7px;height:7px;border-right:2px solid var(--mute);border-bottom:2px solid var(--mute);transform:rotate(45deg);margin:-3px 2px 0 0;flex:none}
+.legend.collapsed{min-width:0}
+.legend.collapsed .t{margin-bottom:0}
+.legend.collapsed .body{display:none}
+.legend.collapsed .chev{transform:rotate(-135deg);margin-top:3px}
 .legend .r{display:flex;align-items:center;gap:6px;line-height:1.5}
 .legend .n{margin-top:4px;font-size:10px;color:var(--mute);max-width:150px}
 .legend .sw{width:18px;height:12px;border-radius:2px;border:1px solid rgba(0,0,0,.15)}
