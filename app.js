@@ -25,6 +25,9 @@
   const rainGroup = L.layerGroup().addTo(map);            // ชั้นฝน เปิดปิดได้จาก layer control
   const borders = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', { maxZoom: 12, opacity: 0.9, attribution: 'Esri' });
   L.control.layers(basemaps, { 'ชั้นฝน': rainGroup, 'ชื่อเมือง / เส้นเขต (สำหรับดาวเทียม)': borders }, { position: 'topright', collapsed: true }).addTo(map);
+  const TH_BOUNDS = L.latLngBounds([5.6, 97.3], [20.5, 105.7]);   // กรอบประเทศไทย
+  const fitted = { now: false, fc: false };
+  function fitThailandOnce(p) { if (fitted[p]) return; fitted[p] = true; map.invalidateSize(); map.fitBounds(TH_BOUNDS, { padding: [6, 6] }); }
   const cornersToBounds = (c) => L.latLngBounds([c[2][1], c[0][0]], [c[0][1], c[1][0]]); // [[W,N],[E,N],[E,S],[W,S]]
 
   let overlay = null;
@@ -74,6 +77,7 @@
 
   function nowHeader() {
     const st = now;
+    if (page === 'now') credits();
     document.querySelectorAll('#nowSrc button').forEach((b) => b.classList.toggle('active', b.dataset.s === nowSrc));
     const sl = $('nowSlider'), b = $('nowBadge');
     if (!st.frames.length) {
@@ -184,7 +188,6 @@
     try { localStorage.setItem('rainmap.nowSrc', s); } catch (e) { /* ข้ามได้ */ }
     nowHeader(); nowLegend(); nowRender();
     loadNow();
-    if (now.bounds && !now.fitted) { now.fitted = true; map.fitBounds(s === 'th' ? now.bounds : L.latLngBounds([0, 92], [26, 112]), { padding: [4, 4] }); }
   }
 
   $('nowPrev').onclick = () => { nowPlay(false); nowStep(-1); };
@@ -324,6 +327,7 @@
     $('fcKind').textContent = `ฝนสะสม ${fc.win} วัน | ${fc.meta.source.toUpperCase()} รอบ ${fmtDateTime(fc.meta.init)}`;
     document.querySelectorAll('#fcWin button').forEach((b) => b.classList.toggle('active', +b.dataset.w === fc.win));
     showImage(fcImage(fc.win, fc.start), fc.bounds, 1);
+    credits();
   }
 
   async function loadFc() {
@@ -344,6 +348,20 @@
   document.querySelectorAll('#fcWin button').forEach((b) => { b.onclick = () => { fc.win = +b.dataset.w; fcRender(); }; });
   $('fcSlider').oninput = (e) => { fc.start = +e.target.value; fcRender(); };
 
+  // ---------- แหล่งที่มา / เวลาข้อมูล ----------
+  function credits() {
+    let src, when = null;
+    if (page === 'now') {
+      src = nowSrc === 'region' ? 'RainViewer (เรดาร์รวมภูมิภาค) | คาดการณ์ 2 ชม. คำนวณเอง' : 'กรมอุตุนิยมวิทยา ผ่านระบบสมดุลน้ำ กรมชลประทาน';
+      when = now.latest;
+    } else {
+      src = 'NOAA GFS' + (fc.meta && fc.meta.provider === 'rid' ? ' ผ่านระบบสมดุลน้ำ กรมชลประทาน' : '');
+      when = fc.meta ? fc.meta.init : null;
+    }
+    $('note').textContent = 'แหล่งที่มา: ' + src;
+    $('foot').textContent = (when ? `ข้อมูล ณ ${fmtDateTime(when)}` : 'กำลังโหลดข้อมูล') + ' | แหล่งที่มา: ' + src;
+  }
+
   // ---------- สลับหน้า ----------
   let page = 'now';
   function showPage(p) {
@@ -351,8 +369,8 @@
     document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.page === p));
     document.querySelectorAll('.page').forEach((s) => s.classList.toggle('active', s.id === 'page-' + p));
     nowPlay(false); clearImage();
-    // เข้าหน้า forecast ครั้งแรก ซูมออกให้เห็นทั้งกรอบข้อมูล (ทั้งภูมิภาค) หลังจากนั้นไม่ไปยุ่งกับมุมมองของผู้ใช้
-    if (p === 'fc' && fc.bounds && !fc.fitted) { fc.fitted = true; map.invalidateSize(); map.fitBounds(fc.bounds, { padding: [4, 4] }); }
+    fitThailandOnce(p);   // เปิดหน้าไหนครั้งแรก ให้เห็นประเทศไทยพอดี หลังจากนั้นไม่ยุ่งกับมุมมองของผู้ใช้
+    credits();
     if (p === 'now') { nowHeader(); nowLegend(); nowRender(); loadNow(); }
     else if (fc.meta) fcShow();
     location.hash = p;
@@ -362,16 +380,12 @@
 
   // ---------- เริ่ม ----------
   (async () => {
-    try {
-      const st = await (await fetch('data/status.json?t=' + Date.now())).json();
-      $('foot').textContent = `ดึงข้อมูลล่าสุด ${fmtDateTime(st.fetched)} | เรดาร์ภูมิภาค: RainViewer | เรดาร์ไทย: กรมอุตุนิยมวิทยา ผ่านระบบสมดุลน้ำ กรมชลประทาน (ทดลอง) | ฝนคาดการณ์: NOAA GFS${st.forecast && st.forecast.provider === 'rid' ? ' (สำรองจากกรมชลฯ เฉพาะประเทศไทย)' : ''}`;
-    } catch (e) { $('foot').textContent = 'ยังไม่มีไฟล์สถานะ (รัน fetch.py ก่อน)'; }
     const want = location.hash === '#fc' ? 'fc' : 'now';
     nowHeader(); nowLegend();
     const pn = loadNow();
     const pf = loadFc().catch((e) => { $('fcKind').textContent = 'โหลด forecast ไม่ได้: ' + e.message; });
     if (want === 'fc') { await pf; showPage('fc'); }
-    else if (nowSrc === 'region') map.fitBounds(L.latLngBounds([0, 92], [26, 112]), { padding: [4, 4] });
+    else { fitThailandOnce('now'); credits(); }
     await Promise.all([pn, pf]);
   })();
 })();
