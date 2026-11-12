@@ -4,6 +4,10 @@
 รัน:  python fetch.py            (ดึงทั้งเรดาร์และ forecast)
       python fetch.py radar      (เฉพาะเรดาร์)
       python fetch.py forecast   (เฉพาะ forecast)
+      เติม --force เพื่อดึง GFS ใหม่แม้รอบเดิม
+
+เรดาร์มาจากระบบสมดุลน้ำ กรมชลประทาน ส่วน forecast ดึง GFS จาก NOAA เอง (fetch_gfs.py)
+และใช้ไฟล์ของกรมชลฯ เป็นทางสำรองเมื่อ NOAA ล่มและยังไม่มีไฟล์เดิม
 """
 import json
 import os
@@ -77,16 +81,35 @@ def fetch_radar() -> dict:
     return {"latest": idx.get("latest"), "frames": len(slim["frames"]), "nowcast": len(slim["nowcast"])}
 
 
-def fetch_forecast() -> dict:
+def fetch_forecast_rid() -> dict:
+    """ทางสำรอง: ไฟล์ forecast ของระบบสมดุลน้ำ กรมชลประทาน (ครอบคลุมเฉพาะประเทศไทย)"""
     meta = json.loads(get("forecast/meta.json"))
     meta.pop("leadHours", None)              # ยาวและไม่ได้ใช้
+    meta["provider"] = "rid"
     save("forecast/meta.json", json.dumps(meta, ensure_ascii=False).encode("utf-8"))
     save("forecast/daily.bin", get("forecast/daily.bin"))
-    return {"init": meta.get("init"), "source": meta.get("source"), "grid": meta.get("grid")}
+    return {"init": meta.get("init"), "source": meta.get("source"), "provider": "rid"}
+
+
+def fetch_forecast() -> dict:
+    """ทางหลัก: GFS จาก NOAA ทั้งภูมิภาค ถ้าล้มเหลวและยังไม่มีไฟล์เดิม ใช้ของกรมชลฯ แทน"""
+    import fetch_gfs
+    try:
+        return fetch_gfs.fetch(force="--force" in sys.argv)
+    except Exception as e:  # noqa: BLE001
+        print("GFS จาก NOAA ล้มเหลว:", e)
+        if (OUT / "forecast" / "daily.bin").exists():
+            m = json.loads((OUT / "forecast" / "meta.json").read_text(encoding="utf-8"))
+            return {"init": m.get("init"), "source": m.get("source"), "provider": m.get("provider"),
+                    "kept": True, "error": str(e)}
+        r = fetch_forecast_rid()
+        r["fallback"] = str(e)
+        return r
 
 
 def main() -> int:
-    what = sys.argv[1] if len(sys.argv) > 1 else "all"
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    what = args[0] if args else "all"
     status = {"fetched": datetime.now(timezone.utc).isoformat(timespec="seconds"), "source": BASE}
     ok = True
     if what in ("all", "radar"):
@@ -116,6 +139,13 @@ def main() -> int:
         except Exception:  # noqa: BLE001
             pass
     save("status.json", json.dumps(status, ensure_ascii=False, indent=1).encode("utf-8"))
+    # ให้ GitHub Actions รู้รอบ forecast ปัจจุบัน (ใช้ตั้งชื่อ cache)
+    gh = os.environ.get("GITHUB_OUTPUT")
+    fc = status.get("forecast") or {}
+    if gh and fc.get("init"):
+        tag = (fc.get("provider") or "x") + "-" + "".join(ch for ch in fc["init"] if ch.isdigit())
+        with open(gh, "a", encoding="utf-8") as f:
+            f.write("fc_tag=" + tag + chr(10))
     return 0 if ok else 1
 
 

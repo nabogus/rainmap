@@ -13,7 +13,7 @@
   const ACC_COLORS = [[200, 225, 255], [110, 170, 255], [40, 120, 230], [60, 190, 110], [250, 200, 40], [220, 40, 60]];
 
   // ---------- แผนที่ ----------
-  const map = L.map('map', { zoomControl: true, attributionControl: true }).setView([13.5, 101], 6);
+  const map = L.map('map', { zoomControl: true, attributionControl: true, zoomSnap: 0.5 }).setView([13.5, 101], 6);
   const OSM_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
   const basemaps = {
     'แผนที่ถนน (OSM)': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 12, attribution: OSM_ATTR }),
@@ -135,7 +135,7 @@
     }
     // วาดด้วย bilinear interpolation ระหว่างจุดกริด 0.25 องศา (ค่าระหว่างจุดเป็นค่าประมาณ)
     const S = g.lat0 - g.dlat / 2, N = g.lat0 + (ny - 1) * g.dlat + g.dlat / 2, Wl = g.lon0 - g.dlon / 2;
-    const PX = 16, W = nx * PX, H = ny * PX;
+    const PX = nx > 60 ? 8 : 16, W = nx * PX, H = ny * PX;   // กริดภูมิภาคใหญ่ ใช้พิกเซลต่อช่องน้อยลง
     const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
     const ctx = cv.getContext('2d'), im = ctx.createImageData(W, H), px = im.data;
     const yN = merc(N), yS = merc(S);
@@ -199,6 +199,8 @@
     document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.page === p));
     document.querySelectorAll('.page').forEach((s) => s.classList.toggle('active', s.id === 'page-' + p));
     nowPlay(false); clearImage();
+    // เข้าหน้า forecast ครั้งแรก ซูมออกให้เห็นทั้งกรอบข้อมูล (ทั้งภูมิภาค) หลังจากนั้นไม่ไปยุ่งกับมุมมองของผู้ใช้
+    if (p === 'fc' && fc.bounds && !fc.fitted) { fc.fitted = true; map.invalidateSize(); map.fitBounds(fc.bounds, { padding: [4, 4] }); }
     if (p === 'now') { if (now.idx) { legend('ฝน (มม./ชม.)', now.idx.levels, RATE_COLORS, ''); nowRender(); } }
     else if (fc.meta) fcShow();
     location.hash = p;
@@ -210,13 +212,12 @@
   (async () => {
     try {
       const st = await (await fetch('data/status.json?t=' + Date.now())).json();
-      $('foot').textContent = `ดึงข้อมูลล่าสุด ${fmtDateTime(st.fetched)} | เรดาร์: กรมอุตุนิยมวิทยา (ภาพยังไม่ผ่านการตรวจสอบ) | ฝนคาดการณ์: NOAA GFS | ผ่านระบบสมดุลน้ำ กรมชลประทาน (ทดลอง)`;
+      $('foot').textContent = `ดึงข้อมูลล่าสุด ${fmtDateTime(st.fetched)} | เรดาร์: กรมอุตุนิยมวิทยา (ภาพยังไม่ผ่านการตรวจสอบ) | ผ่านระบบสมดุลน้ำ กรมชลประทาน (ทดลอง) | ฝนคาดการณ์: NOAA GFS${st.forecast && st.forecast.provider === 'rid' ? ' (สำรองจากกรมชลฯ เฉพาะประเทศไทย)' : ''}`;
     } catch (e) { $('foot').textContent = 'ยังไม่มีไฟล์สถานะ (รัน fetch.py ก่อน)'; }
     const want = location.hash === '#fc' ? 'fc' : 'now';
     const pn = loadNow().catch((e) => { $('nowKind').textContent = 'โหลดเรดาร์ไม่ได้: ' + e.message; });
     const pf = loadFc().catch((e) => { $('fcKind').textContent = 'โหลด forecast ไม่ได้: ' + e.message; });
     if (want === 'fc') { await pf; showPage('fc'); } else { await pn; }
     await Promise.all([pn, pf]);
-    if (page === 'fc' && fc.meta) fcShow();
   })();
 })();

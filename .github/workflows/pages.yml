@@ -27,8 +27,23 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # forecast GFS ออกวันละ 4 รอบ เก็บไฟล์ไว้ใน cache จะได้ไม่ต้องดึง NOAA ซ้ำทุก 15 นาที
+      - name: Restore forecast cache
+        id: fc-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/forecast
+          key: fc-none
+          restore-keys: fc-
       - name: Fetch radar + forecast
+        id: fetch
         run: python fetch.py
+      - name: Save forecast cache
+        if: steps.fetch.outputs.fc_tag != '' && steps.fc-cache.outputs.cache-matched-key != format('fc-{0}', steps.fetch.outputs.fc_tag)
+        uses: actions/cache/save@v4
+        with:
+          path: data/forecast
+          key: fc-${{ steps.fetch.outputs.fc_tag }}
       - name: Assemble site
         run: |
           mkdir -p site
