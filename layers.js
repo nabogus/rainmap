@@ -45,6 +45,50 @@ window.RainLayers = (() => {
     },
   });
 
+  // เก็บชั้นเมฆแยกตามเวลา โหลดล่วงหน้าไว้แบบโปร่งใส แล้วสลับด้วย opacity
+  // (ถ้าล้างแล้วโหลด tile ใหม่ทุกเฟรม ภาพจะกระพริบตอนเล่น)
+  function CloudStack(map) {
+    const OP = 0.9, layers = new Map();     // time -> { layer, loaded }
+    let want = null, shown = null, on = false;
+    function ensure(t) {
+      let e = layers.get(t);
+      if (!e) {
+        const layer = new CloudLayer({ opacity: 0 });
+        layer._time = t;
+        e = { layer, loaded: false };
+        layer.on('load', () => { e.loaded = true; if (on && want === t) swap(t); });
+        layers.set(t, e);
+      }
+      if (on && !map.hasLayer(e.layer)) e.layer.addTo(map);
+      return e;
+    }
+    function swap(t) {
+      if (shown === t) return;
+      const old = shown && layers.get(shown);
+      layers.get(t).layer.setOpacity(OP);
+      if (old) old.layer.setOpacity(0);
+      shown = t;
+    }
+    return {
+      show(t) {            // แสดงเวลานี้ ถ้ายังโหลดไม่เสร็จ คงภาพเดิมไว้ก่อน
+        on = true; want = t;
+        const e = ensure(t);
+        if (e.loaded || !shown) swap(t);
+      },
+      preload(times) {     // เตรียมทุกเวลาที่จะใช้ และทิ้งเวลาที่ไม่ใช้แล้ว
+        if (!on) return;
+        const keep = new Set(times);
+        for (const [t, e] of layers) if (!keep.has(t) && t !== want && t !== shown) { map.removeLayer(e.layer); layers.delete(t); }
+        times.forEach(ensure);
+      },
+      hide() {
+        on = false; want = shown = null;
+        for (const e of layers.values()) map.removeLayer(e.layer);
+        layers.clear();
+      },
+    };
+  }
+
   // เวลาเมฆที่ใช้กับเฟรม: ปัดลงเป็น 10 นาที และไม่ใหม่กว่า 40 นาทีก่อนปัจจุบัน (ภาพดาวเทียมมาช้ากว่าเรดาร์)
   function cloudTime(iso) {
     const lim = Date.now() - 40 * 60000, t = Math.min(new Date(iso).getTime(), lim);
@@ -157,5 +201,5 @@ window.RainLayers = (() => {
   // ลมพัด "มาจาก" ทิศไหน
   function windFrom(u, v) { const deg = (Math.atan2(-u, -v) * 180) / Math.PI; return DIRS[Math.round(((deg + 360) % 360) / 45) % 8]; }
 
-  return { CloudLayer, cloudTime, WindLayer, isobars, sampleGrid, windFrom };
+  return { CloudLayer, CloudStack, cloudTime, WindLayer, isobars, sampleGrid, windFrom };
 })();

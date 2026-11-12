@@ -30,12 +30,27 @@
   function fitThailandOnce(p) { if (fitted[p]) return; fitted[p] = true; map.invalidateSize(); map.fitBounds(TH_BOUNDS, { padding: [6, 6] }); }
   const cornersToBounds = (c) => L.latLngBounds([c[2][1], c[0][0]], [c[0][1], c[1][0]]); // [[W,N],[E,N],[E,S],[W,S]]
 
-  let overlay = null;
+  // ภาพฝนใช้ 2 ชั้นสลับกัน: โหลดรูปใหม่ลงชั้นที่ซ่อนอยู่ รอจนพร้อมแล้วค่อยเฟดข้าม ภาพจึงไม่กระตุกตอนเล่น
+  const TRANSPARENT = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
+  const ov = { layers: [], urls: [null, null], active: -1, token: 0 };
   function showImage(url, bounds, opacity) {
-    if (!overlay) { overlay = L.imageOverlay(url, bounds, { opacity, interactive: false, className: 'rain-img' }).addTo(rainGroup); return; }
-    overlay.setBounds(bounds); overlay.setOpacity(opacity); overlay.setUrl(url);
+    if (!ov.layers.length) for (let i = 0; i < 2; i++) ov.layers.push(L.imageOverlay(TRANSPARENT, bounds, { opacity: 0, interactive: false, className: 'rain-img' }).addTo(rainGroup));
+    const token = ++ov.token;
+    if (ov.active >= 0 && ov.urls[ov.active] === url) { ov.layers[ov.active].setBounds(bounds).setOpacity(opacity); return; }
+    const next = ov.active === 0 ? 1 : 0, lay = ov.layers[next], img = lay.getElement();
+    const done = () => {
+      if (token !== ov.token) return;                 // มีคำสั่งใหม่กว่าแล้ว
+      lay.setOpacity(opacity);
+      if (ov.active >= 0) ov.layers[ov.active].setOpacity(0);
+      ov.active = next;
+    };
+    lay.setBounds(bounds);
+    ov.urls[next] = url;
+    if (img.getAttribute('src') === url && img.complete) { done(); return; }
+    img.onload = done;
+    lay.setUrl(url);
   }
-  function clearImage() { if (overlay) { rainGroup.removeLayer(overlay); overlay = null; } }
+  function clearImage() { ov.token++; ov.layers.forEach((l) => rainGroup.removeLayer(l)); ov.layers = []; ov.urls = [null, null]; ov.active = -1; }
 
   // legend หุบได้: แตะหัวข้อเพื่อหุบ/กาง และจำสถานะไว้
   let legendCollapsed = false;
@@ -116,16 +131,16 @@
     else if (st.status && st.loading) kind += ' | ' + st.status;
     $('nowKind').textContent = kind;
     if (url) showImage(url, st.bounds, nowcast ? 0.75 : 0.9);
-    if (layersOn.cloud) cloud.setTime(RL.cloudTime(f.time));
+    if (layersOn.cloud) cloud.show(RL.cloudTime(f.time));
   }
   function nowStep(d) { if (!now.frames.length) return; now.cur = (now.cur + d + now.frames.length) % now.frames.length; nowRender(); }
   function nowPlay(on) {
     if (nowTimer) { clearInterval(nowTimer); nowTimer = null; $('nowPlay').innerHTML = '&#9654;'; }
-    if (on) { nowTimer = setInterval(() => nowStep(1), 650); $('nowPlay').innerHTML = '&#10074;&#10074;'; }
+    if (on) { cloudPreload(); nowTimer = setInterval(() => nowStep(1), 650); $('nowPlay').innerHTML = '&#10074;&#10074;'; }
   }
   const isActive = (st) => st === now && page === 'now';
   function nowLegend() {
-    legend('ฝน (มม./ชม.)', now.levels, RATE_COLORS, '', nowSrc === 'region' ? 'เรดาร์รวม RainViewer | คาดการณ์จากทิศทางและความเร็วของกลุ่มฝน ไม่รวมฝนก่อตัวใหม่' : 'เรดาร์กรมอุตุฯ ผ่านกรมชลฯ (เฉพาะไทย)');
+    legend('ฝน (มม./ชม.)', now.levels, RATE_COLORS, '', nowSrc === 'region' ? 'เรดาร์รวม RainViewer | คาดการณ์จากทิศทางและความเร็วของกลุ่มฝน ไม่รวมฝนก่อตัวใหม่' : 'เรดาร์กรมอุตุฯ | ประมวลผลและคาดการณ์โดยระบบสมดุลน้ำ (เฉพาะไทย)');
   }
 
   // ---- แหล่ง th ----
@@ -379,7 +394,7 @@
   const RL = window.RainLayers;
   const layersOn = { rain: true, cloud: false, wind: false, pres: false };
   try { Object.assign(layersOn, JSON.parse(localStorage.getItem('rainmap.layers') || '{}')); } catch (e) { /* ใช้ค่าเริ่มต้น */ }
-  const cloud = new RL.CloudLayer();
+  const cloud = RL.CloudStack(map);
   const wind = RL.WindLayer(map);
   const presGroup = L.layerGroup();
   const presRenderer = L.canvas({ padding: 0.5 });
@@ -414,14 +429,15 @@
     iso.lows.forEach((p) => mark(p, 'L', 'lo'));
   }
 
+  function cloudPreload() { if (layersOn.cloud && page === 'now' && now.frames.length) cloud.preload([...new Set(now.frames.map((f) => RL.cloudTime(f.time)))]); }
   function applyLayers() {
     if (layersOn.rain) { if (!map.hasLayer(rainGroup)) rainGroup.addTo(map); } else if (map.hasLayer(rainGroup)) map.removeLayer(rainGroup);
     const cloudOn = layersOn.cloud && page === 'now';
     if (cloudOn) {
       const f = now.frames[now.cur];
-      cloud.setTime(f ? RL.cloudTime(f.time) : 'default');
-      if (!map.hasLayer(cloud)) cloud.addTo(map);
-    } else if (map.hasLayer(cloud)) map.removeLayer(cloud);
+      cloud.show(f ? RL.cloudTime(f.time) : 'default');
+      cloudPreload();
+    } else cloud.hide();
     const wxOk = page === 'fc' && fc.wx;
     if (wxOk && layersOn.wind) { wind.setData(wxAt(fc.start)); wind.show(true); } else wind.show(false);
     if (wxOk && layersOn.pres) { drawPressure(fc.start); if (!map.hasLayer(presGroup)) presGroup.addTo(map); } else if (map.hasLayer(presGroup)) map.removeLayer(presGroup);
@@ -443,10 +459,10 @@
   function credits() {
     let src, when = null;
     if (page === 'now') {
-      src = nowSrc === 'region' ? 'RainViewer (เรดาร์รวมภูมิภาค) | คาดการณ์ 2 ชม. จากทิศทางและความเร็วของกลุ่มฝน' : 'กรมอุตุนิยมวิทยา ผ่านระบบสมดุลน้ำ กรมชลประทาน';
+      src = nowSrc === 'region' ? 'RainViewer (เรดาร์รวมภูมิภาค) | คาดการณ์ 2 ชม. จากทิศทางและความเร็วของกลุ่มฝน' : 'เรดาร์กรมอุตุนิยมวิทยา (ยังไม่ผ่านการตรวจสอบ) | ประมวลผลและคาดการณ์โดยระบบสมดุลน้ำ (ทดลอง)';
       when = now.latest;
     } else {
-      src = 'NOAA GFS' + (fc.meta && fc.meta.provider === 'rid' ? ' ผ่านระบบสมดุลน้ำ กรมชลประทาน' : '');
+      src = 'NOAA GFS' + (fc.meta && fc.meta.provider === 'rid' ? ' ผ่านระบบสมดุลน้ำ (ทดลอง)' : '');
       when = fc.meta ? fc.meta.init : null;
     }
     $('note').textContent = 'แหล่งที่มา: ' + src;

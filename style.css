@@ -74,3 +74,5 @@ input[type=range]{width:100%;margin:6px 0 2px}
 .hl span{display:block;font-size:10px;font-weight:600}
 .hl.hi{color:#1556c0}
 .hl.lo{color:#c62828}
+.rain-img{transition:opacity .22s linear}
+.cloud-tiles{transition:opacity .22s linear}
