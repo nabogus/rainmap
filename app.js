@@ -1,5 +1,5 @@
 /* RainMap: แผนที่ฝนตอนนี้ (เรดาร์ + nowcast 2 ชม.) และฝนคาดการณ์ 1/3/7/15 วัน
-   อ่านไฟล์จาก data/ ที่ fetch.py ดึงมาไว้ */
+   เรดาร์ภูมิภาคโหลดตรงจาก RainViewer (nowcast.js) ส่วนเรดาร์ไทยและ forecast อ่านจาก data/ ที่ fetch.py ดึงมาไว้ */
 (() => {
   'use strict';
   const $ = (id) => document.getElementById(id);
@@ -46,10 +46,17 @@
   }
 
   // ---------- หน้า ฝนตอนนี้ ----------
-  const now = { idx: null, frames: [], urls: [], cur: 0, timer: null, bounds: null };
+  // มี 2 แหล่ง: region = เรดาร์รวมทั้งภูมิภาค (RainViewer) + คาดการณ์ที่คำนวณเองใน nowcast.js
+  //             th     = เรดาร์กรมอุตุฯ + คาดการณ์ จากระบบสมดุลน้ำ กรมชลประทาน (เฉพาะประเทศไทย)
+  const NC = window.RainNowcast;
+  const newState = () => ({ ready: false, loading: false, error: null, frames: [], urls: [], codes: [], cur: 0, obsLast: 0, bounds: null, latest: null, levels: [0.2, 1, 2, 5, 10, 20], status: '', motion: null });
+  const nowStates = { region: newState(), th: newState() };
+  let nowSrc = 'region', now = nowStates.region, nowTimer = null;
+  try { const s = localStorage.getItem('rainmap.nowSrc'); if (s === 'th' || s === 'region') { nowSrc = s; now = nowStates[s]; } } catch (e) { /* ไม่มี storage ก็ใช้ค่าเริ่มต้น */ }
+  const tick = () => new Promise((r) => setTimeout(r, 0));
 
   async function colorize(src, levelsN) {
-    // PNG จากต้นทางเป็นภาพเทา ค่าพิกเซล k = ระดับฝน (1..6), 0 = ไม่มีฝน
+    // PNG จากกรมชลฯ เป็นภาพเทา ค่าพิกเซล k = ระดับฝน (1..6), 0 = ไม่มีฝน
     const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
     const cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height;
     const ctx = cv.getContext('2d', { willReadFrequently: true });
@@ -65,49 +72,194 @@
     return new Promise((res) => cv.toBlob((b) => res(URL.createObjectURL(b)), 'image/png'));
   }
 
-  function nowRender() {
-    const f = now.frames[now.cur];
-    if (!f || page !== 'now') return;
-    $('nowSlider').value = now.cur;
-    $('nowTime').textContent = fmtTime(f.time);
-    const nowcast = f.kind === 'nowcast';
-    $('nowKind').textContent = nowcast ? 'คาดการณ์จากทิศทางและความเร็วกลุ่มฝน' : (now.cur === now.obsLast ? 'ข้อมูลล่าสุดจากเรดาร์' : 'ภาพเรดาร์ย้อนหลัง');
-    const url = now.urls[now.cur];
-    if (url) showImage(url, now.bounds, nowcast ? 0.75 : 0.9);
-  }
-  function nowStep(d) { now.cur = (now.cur + d + now.frames.length) % now.frames.length; nowRender(); }
-  function nowPlay(on) {
-    if (now.timer) { clearInterval(now.timer); now.timer = null; $('nowPlay').innerHTML = '&#9654;'; }
-    if (on) { now.timer = setInterval(() => nowStep(1), 650); $('nowPlay').innerHTML = '&#10074;&#10074;'; }
+  function nowHeader() {
+    const st = now;
+    document.querySelectorAll('#nowSrc button').forEach((b) => b.classList.toggle('active', b.dataset.s === nowSrc));
+    const sl = $('nowSlider'), b = $('nowBadge');
+    if (!st.frames.length) {
+      sl.max = 0; $('nowTicks').innerHTML = ''; $('nowTime').textContent = '--:--';
+      $('nowKind').textContent = st.error ? 'โหลดไม่ได้: ' + st.error : 'กำลังโหลด';
+      b.textContent = st.error ? 'ไม่มีข้อมูล' : 'กำลังโหลด'; b.className = 'badge stale';
+      return;
+    }
+    sl.max = st.frames.length - 1;
+    $('nowTicks').innerHTML = `<span>${fmtTime(st.frames[0].time)}</span><b>ตอนนี้ ${fmtTime(st.latest)}</b><span>${fmtTime(st.frames[st.frames.length - 1].time)}</span>`;
+    const ageMin = (Date.now() - new Date(st.latest)) / 60000;
+    if (ageMin > 60) { b.textContent = 'ข้อมูลเก่า ' + Math.round(ageMin) + ' นาที'; b.className = 'badge stale'; }
+    else { b.textContent = 'สด ' + fmtTime(st.latest); b.className = 'badge'; }
   }
 
-  async function loadNow() {
+  function nowRender() {
+    const st = now, f = st.frames[st.cur];
+    if (page !== 'now') return;
+    if (!f) { nowHeader(); return; }
+    $('nowSlider').value = st.cur;
+    $('nowTime').textContent = fmtTime(f.time);
+    const nowcast = f.kind === 'nowcast', url = st.urls[st.cur];
+    let kind = nowcast ? 'คาดการณ์จากทิศทางและความเร็วกลุ่มฝน' : (st.cur === st.obsLast ? 'ข้อมูลล่าสุดจากเรดาร์' : 'ภาพเรดาร์ย้อนหลัง');
+    if (!url) kind = st.status || 'กำลังเตรียมภาพ';
+    else if (st.status && st.loading) kind += ' | ' + st.status;
+    $('nowKind').textContent = kind;
+    if (url) showImage(url, st.bounds, nowcast ? 0.75 : 0.9);
+  }
+  function nowStep(d) { if (!now.frames.length) return; now.cur = (now.cur + d + now.frames.length) % now.frames.length; nowRender(); }
+  function nowPlay(on) {
+    if (nowTimer) { clearInterval(nowTimer); nowTimer = null; $('nowPlay').innerHTML = '&#9654;'; }
+    if (on) { nowTimer = setInterval(() => nowStep(1), 650); $('nowPlay').innerHTML = '&#10074;&#10074;'; }
+  }
+  const isActive = (st) => st === now && page === 'now';
+  function nowLegend() {
+    legend('ฝน (มม./ชม.)', now.levels, RATE_COLORS, '', nowSrc === 'region' ? 'เรดาร์รวม RainViewer | คาดการณ์คำนวณเอง ไม่รวมฝนก่อตัวใหม่' : 'เรดาร์กรมอุตุฯ ผ่านกรมชลฯ (เฉพาะไทย)');
+  }
+
+  // ---- แหล่ง th ----
+  async function loadTh(st) {
     const idx = await (await fetch('data/radar/index.json?t=' + Date.now())).json();
-    now.idx = idx;
-    now.frames = [...idx.frames, ...idx.nowcast];
-    now.obsLast = idx.frames.length - 1;
-    now.bounds = cornersToBounds(idx.corners);
-    now.cur = now.obsLast;
-    const sl = $('nowSlider'); sl.max = now.frames.length - 1; sl.value = now.cur;
-    $('nowTicks').innerHTML = `<span>${fmtTime(now.frames[0].time)}</span><b>ตอนนี้ ${fmtTime(idx.latest)}</b><span>${fmtTime(now.frames[now.frames.length - 1].time)}</span>`;
-    const ageMin = (Date.now() - new Date(idx.latest)) / 60000;
-    const b = $('nowBadge');
-    if (ageMin > 60) { b.textContent = 'ข้อมูลเก่า ' + Math.round(ageMin) + ' นาที'; b.className = 'badge stale'; }
-    else { b.textContent = 'สด ' + fmtTime(idx.latest); b.className = 'badge'; }
-    legend('ฝน (มม./ชม.)', idx.levels, RATE_COLORS, '');
-    // แปลงสีเฟรมปัจจุบันก่อน แล้วค่อยทยอยทำที่เหลือ
-    now.urls = new Array(now.frames.length).fill(null);
-    now.urls[now.cur] = await colorize('data/' + now.frames[now.cur].file, idx.levels.length);
-    nowRender();
+    st.frames = [...idx.frames, ...idx.nowcast];
+    st.obsLast = idx.frames.length - 1;
+    st.bounds = cornersToBounds(idx.corners);
+    st.latest = idx.latest; st.levels = idx.levels; st.cur = st.obsLast;
+    st.urls = new Array(st.frames.length).fill(null);
+    if (isActive(st)) { nowHeader(); nowLegend(); }
+    st.urls[st.cur] = await colorize('data/' + st.frames[st.cur].file, idx.levels.length);
+    st.ready = true;
+    if (isActive(st)) nowRender();
     const order = [];
-    for (let k = 1; k < now.frames.length; k++) { if (now.cur + k < now.frames.length) order.push(now.cur + k); if (now.cur - k >= 0) order.push(now.cur - k); }
-    for (const i of order) { now.urls[i] = await colorize('data/' + now.frames[i].file, idx.levels.length); if (i === now.cur) nowRender(); }
+    for (let k = 1; k < st.frames.length; k++) { if (st.obsLast + k < st.frames.length) order.push(st.obsLast + k); if (st.obsLast - k >= 0) order.push(st.obsLast - k); }
+    for (const i of order) { st.urls[i] = await colorize('data/' + st.frames[i].file, idx.levels.length); if (isActive(st) && i === st.cur) nowRender(); }
+  }
+
+  // ---- แหล่ง region ----
+  async function loadRegion(st) {
+    const { host, past } = await NC.index();
+    const nObs = past.length, t0 = past[nObs - 1].time * 1000;
+    const iso = (ms) => new Date(ms).toISOString();
+    st.frames = past.map((p) => ({ time: iso(p.time * 1000), kind: 'obs' }));
+    for (let k = 1; k <= NC.N_FC; k++) st.frames.push({ time: iso(t0 + k * NC.STEP_MIN * 60000), kind: 'nowcast' });
+    st.obsLast = nObs - 1; st.cur = st.obsLast; st.latest = iso(t0); st.levels = NC.LEVELS;
+    st.bounds = L.latLngBounds(NC.BOUNDS[0], NC.BOUNDS[1]);
+    st.urls = new Array(st.frames.length).fill(null); st.codes = new Array(st.frames.length).fill(null);
+    if (isActive(st)) { nowHeader(); nowLegend(); }
+    // เฟรมล่าสุดก่อน แล้วไล่ย้อนหลัง
+    let got = 0;
+    for (let i = nObs - 1; i >= 0; i--) {
+      st.status = `กำลังโหลดเรดาร์ ${++got}/${nObs}`;
+      if (isActive(st)) nowRender();
+      st.codes[i] = await NC.loadFrame(host, past[i].path);
+      st.urls[i] = await NC.render(st.codes[i], RATE_COLORS);
+      if (i === nObs - 1) st.ready = true;
+      if (isActive(st) && i === st.cur) nowRender();
+    }
+    // เวกเตอร์การเคลื่อนที่จากคู่เฟรมห่างกัน 30 นาที (3 ขั้น) แล้วเลื่อนภาพล่าสุดไปข้างหน้า
+    st.status = 'กำลังคำนวณคาดการณ์ 2 ชม.';
+    if (isActive(st)) nowRender();
+    const GAP = 3, small = st.codes.slice(0, nObs).map((c) => NC.shrink(c)), pairs = [];
+    for (let i = nObs - 1; i - GAP >= 0 && pairs.length < 3; i -= GAP) pairs.push([small[i], small[i - GAP]]);
+    st.motion = pairs.length ? await NC.motion(pairs, tick) : null;
+    for (let k = 1; k <= NC.N_FC; k++) {
+      const i = st.obsLast + k;
+      st.codes[i] = st.motion ? NC.advect(st.codes[st.obsLast], st.motion, 1 / GAP, k) : st.codes[st.obsLast];
+      st.urls[i] = await NC.render(st.codes[i], RATE_COLORS);
+      if (isActive(st) && i === st.cur) nowRender();
+      await tick();
+    }
+    st.status = '';
+    if (isActive(st)) nowRender();
+  }
+
+  async function loadNow(force) {
+    const st = now, src = nowSrc;
+    if (st.loading || (st.ready && !force)) { if (page === 'now') { nowHeader(); nowLegend(); nowRender(); } return; }
+    st.loading = true; st.error = null;
+    try { await (src === 'region' ? loadRegion(st) : loadTh(st)); }
+    catch (e) { st.error = e.message || String(e); st.status = ''; if (isActive(st)) { nowHeader(); nowRender(); } }
+    st.loading = false;
+    if (isActive(st)) nowRender();
+  }
+
+  function setNowSrc(s) {
+    if (s === nowSrc) return;
+    nowPlay(false); clearImage();
+    nowSrc = s; now = nowStates[s];
+    try { localStorage.setItem('rainmap.nowSrc', s); } catch (e) { /* ข้ามได้ */ }
+    nowHeader(); nowLegend(); nowRender();
+    loadNow();
+    if (now.bounds && !now.fitted) { now.fitted = true; map.fitBounds(s === 'th' ? now.bounds : L.latLngBounds([0, 92], [26, 112]), { padding: [4, 4] }); }
   }
 
   $('nowPrev').onclick = () => { nowPlay(false); nowStep(-1); };
   $('nowNext').onclick = () => { nowPlay(false); nowStep(1); };
-  $('nowPlay').onclick = () => nowPlay(!now.timer);
+  $('nowPlay').onclick = () => nowPlay(!nowTimer);
   $('nowSlider').oninput = (e) => { nowPlay(false); now.cur = +e.target.value; nowRender(); };
+  document.querySelectorAll('#nowSrc button').forEach((b) => { b.onclick = () => setNowSrc(b.dataset.s); });
+
+  // โหลดข้อมูลใหม่ทุก 10 นาทีถ้าหน้ายังเปิดอยู่
+  setInterval(() => { if (!document.hidden && page === 'now' && !now.loading && !nowTimer) { const keep = now.cur === now.obsLast; loadNow(true).then(() => { if (keep) { now.cur = now.obsLast; nowRender(); } }); } }, 10 * 60000);
+
+  // ---------- ตำแหน่งปัจจุบัน ----------
+  const loc = { marker: null, circle: null, latlng: null };
+  function toast(msg) {
+    const t = $('toast'); t.textContent = msg; t.classList.add('show');
+    clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 5000);
+  }
+  function locInfo() {
+    const ll = loc.latlng; if (!ll) return '';
+    let h = `<b>ตำแหน่งของคุณ</b><br><span class="small">${ll.lat.toFixed(3)}, ${ll.lng.toFixed(3)}</span>`;
+    if (page === 'now' && nowSrc === 'region' && now.codes[now.obsLast]) {
+      const r0 = NC.sample(now.codes[now.obsLast], ll.lat, ll.lng);
+      if (r0 === null) return h + '<br>อยู่นอกกรอบเรดาร์';
+      h += `<br>ฝนตอนนี้ (${fmtTime(now.latest)}): <b>${r0 >= 0.1 ? r0.toFixed(1) + ' มม./ชม.' : 'ไม่มีฝน'}</b>`;
+      let hit = null, peak = 0, done = true;
+      for (let i = now.obsLast + 1; i < now.frames.length; i++) {
+        if (!now.codes[i]) { done = false; break; }
+        const r = NC.sample(now.codes[i], ll.lat, ll.lng) || 0;
+        if (r > peak) peak = r;
+        if (hit === null && r >= 0.5) hit = i;
+      }
+      if (!done) h += '<br>กำลังคำนวณคาดการณ์';
+      else if (r0 >= 0.5) h += `<br>คาดว่าแรงสุดใน 2 ชม.: ${peak.toFixed(1)} มม./ชม.`;
+      else if (hit !== null) h += `<br>คาดว่าฝนถึงประมาณ <b>${fmtTime(now.frames[hit].time)}</b> (สูงสุด ${peak.toFixed(1)} มม./ชม.)`;
+      else h += '<br>คาดว่าไม่มีฝนใน 2 ชม. ข้างหน้า';
+    } else if (page === 'fc' && fc.data) {
+      const g = fc.grid, r = Math.round((ll.lat - g.lat0) / g.dlat), c = Math.round((ll.lng - g.lon0) / g.dlon);
+      if (r < 0 || c < 0 || r >= g.ny || c >= g.nx) return h + '<br>อยู่นอกกรอบข้อมูลพยากรณ์';
+      let t = 0;
+      for (let d = fc.start; d < Math.min(g.days, fc.start + fc.win); d++) { const v = fc.data[d * g.nx * g.ny + r * g.nx + c]; if (v !== g.nodata) t += v * g.scale; }
+      h += `<br>ฝนสะสม ${fc.win} วัน (เริ่ม ${fmtDate(fc.days[fc.start])}): <b>${t.toFixed(1)} มม.</b>`;
+    }
+    return h;
+  }
+  map.on('locationfound', (e) => {
+    loc.latlng = e.latlng;
+    if (!loc.marker) {
+      loc.circle = L.circle(e.latlng, { radius: e.accuracy, color: '#1f6feb', weight: 1, fillOpacity: 0.08, interactive: false }).addTo(map);
+      loc.marker = L.circleMarker(e.latlng, { radius: 8, color: '#fff', weight: 3, fillColor: '#1f6feb', fillOpacity: 1 }).addTo(map).bindPopup(locInfo, { autoPan: false });
+    } else { loc.marker.setLatLng(e.latlng); loc.circle.setLatLng(e.latlng).setRadius(e.accuracy); }
+    map.setView(e.latlng, Math.max(map.getZoom(), 8));
+    loc.marker.openPopup();
+    $('locBtn').classList.remove('busy');
+  });
+  map.on('locationerror', (e) => {
+    $('locBtn').classList.remove('busy');
+    toast(e.code === 1 ? 'ไม่ได้รับอนุญาตให้ใช้ตำแหน่ง เปิดสิทธิ์ location ของเว็บนี้ใน browser ก่อน' : 'หาตำแหน่งไม่ได้: ' + e.message);
+  });
+  const LocControl = L.Control.extend({
+    options: { position: 'topleft' },
+    onAdd() {
+      const d = L.DomUtil.create('div', 'leaflet-bar');
+      const a = L.DomUtil.create('a', 'loc-btn', d);
+      a.id = 'locBtn'; a.href = '#'; a.title = 'ตำแหน่งปัจจุบัน'; a.setAttribute('role', 'button'); a.setAttribute('aria-label', 'ตำแหน่งปัจจุบัน');
+      a.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="currentColor"/><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4" stroke="currentColor" stroke-width="2"/></svg>';
+      L.DomEvent.on(a, 'click', (ev) => {
+        L.DomEvent.stop(ev);
+        if (!navigator.geolocation) { toast('browser นี้ไม่รองรับการหาตำแหน่ง'); return; }
+        a.classList.add('busy');
+        map.locate({ setView: false, enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+      });
+      return d;
+    },
+  });
+  map.addControl(new LocControl());
 
   // ---------- หน้า ฝนคาดการณ์ ----------
   const fc = { meta: null, grid: null, data: null, win: 3, start: 0, cache: new Map(), bounds: null, days: [] };
@@ -201,7 +353,7 @@
     nowPlay(false); clearImage();
     // เข้าหน้า forecast ครั้งแรก ซูมออกให้เห็นทั้งกรอบข้อมูล (ทั้งภูมิภาค) หลังจากนั้นไม่ไปยุ่งกับมุมมองของผู้ใช้
     if (p === 'fc' && fc.bounds && !fc.fitted) { fc.fitted = true; map.invalidateSize(); map.fitBounds(fc.bounds, { padding: [4, 4] }); }
-    if (p === 'now') { if (now.idx) { legend('ฝน (มม./ชม.)', now.idx.levels, RATE_COLORS, ''); nowRender(); } }
+    if (p === 'now') { nowHeader(); nowLegend(); nowRender(); loadNow(); }
     else if (fc.meta) fcShow();
     location.hash = p;
     setTimeout(() => map.invalidateSize(), 50);
@@ -212,12 +364,14 @@
   (async () => {
     try {
       const st = await (await fetch('data/status.json?t=' + Date.now())).json();
-      $('foot').textContent = `ดึงข้อมูลล่าสุด ${fmtDateTime(st.fetched)} | เรดาร์: กรมอุตุนิยมวิทยา (ภาพยังไม่ผ่านการตรวจสอบ) | ผ่านระบบสมดุลน้ำ กรมชลประทาน (ทดลอง) | ฝนคาดการณ์: NOAA GFS${st.forecast && st.forecast.provider === 'rid' ? ' (สำรองจากกรมชลฯ เฉพาะประเทศไทย)' : ''}`;
+      $('foot').textContent = `ดึงข้อมูลล่าสุด ${fmtDateTime(st.fetched)} | เรดาร์ภูมิภาค: RainViewer | เรดาร์ไทย: กรมอุตุนิยมวิทยา ผ่านระบบสมดุลน้ำ กรมชลประทาน (ทดลอง) | ฝนคาดการณ์: NOAA GFS${st.forecast && st.forecast.provider === 'rid' ? ' (สำรองจากกรมชลฯ เฉพาะประเทศไทย)' : ''}`;
     } catch (e) { $('foot').textContent = 'ยังไม่มีไฟล์สถานะ (รัน fetch.py ก่อน)'; }
     const want = location.hash === '#fc' ? 'fc' : 'now';
-    const pn = loadNow().catch((e) => { $('nowKind').textContent = 'โหลดเรดาร์ไม่ได้: ' + e.message; });
+    nowHeader(); nowLegend();
+    const pn = loadNow();
     const pf = loadFc().catch((e) => { $('fcKind').textContent = 'โหลด forecast ไม่ได้: ' + e.message; });
-    if (want === 'fc') { await pf; showPage('fc'); } else { await pn; }
+    if (want === 'fc') { await pf; showPage('fc'); }
+    else if (nowSrc === 'region') map.fitBounds(L.latLngBounds([0, 92], [26, 112]), { padding: [4, 4] });
     await Promise.all([pn, pf]);
   })();
 })();

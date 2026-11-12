@@ -49,3 +49,11 @@ input[type=range]{width:100%;margin:6px 0 2px}
   .legend{right:16px;bottom:40px}
   .big{font-size:16px}
 }
+.src-row{margin-top:8px}
+.loc-btn{display:flex!important;align-items:center;justify-content:center;color:#1b2430}
+.loc-btn.busy{color:var(--blue);animation:pulse 1s infinite}
+@keyframes pulse{50%{opacity:.35}}
+.toast{position:fixed;left:50%;bottom:60px;transform:translateX(-50%);z-index:900;background:#1b2430;color:#fff;font-size:13px;
+  padding:9px 14px;border-radius:8px;max-width:86vw;opacity:0;pointer-events:none;transition:opacity .2s}
+.toast.show{opacity:.95}
+.leaflet-popup-content .small{font-size:11px;color:var(--mute)}

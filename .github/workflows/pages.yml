@@ -47,7 +47,7 @@ jobs:
       - name: Assemble site
         run: |
           mkdir -p site
-          cp index.html app.js style.css site/
+          cp index.html app.js nowcast.js style.css site/
           cp -r data site/data
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

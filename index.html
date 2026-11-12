@@ -29,6 +29,12 @@
       </div>
       <div id="nowBadge" class="badge">สด</div>
     </div>
+    <div class="row src-row">
+      <div class="seg" id="nowSrc">
+        <button data-s="region" class="active">ทั้งภูมิภาค</button>
+        <button data-s="th">ไทย (กรมอุตุฯ)</button>
+      </div>
+    </div>
     <div class="slider-wrap">
       <div class="slider-lbl"><span>ย้อนหลัง 2 ชม.</span><span class="fc">คาดการณ์ 2 ชม.</span></div>
       <input id="nowSlider" type="range" min="0" max="0" value="0" step="1">
@@ -62,10 +68,12 @@
 <div id="map"></div>
 
 <div id="legend" class="legend"></div>
+<div id="toast" class="toast" role="status"></div>
 <footer id="foot" class="foot"></footer>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="nowcast.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
