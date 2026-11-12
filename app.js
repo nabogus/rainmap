@@ -113,7 +113,7 @@
   }
   const isActive = (st) => st === now && page === 'now';
   function nowLegend() {
-    legend('ฝน (มม./ชม.)', now.levels, RATE_COLORS, '', nowSrc === 'region' ? 'เรดาร์รวม RainViewer | คาดการณ์คำนวณเอง ไม่รวมฝนก่อตัวใหม่' : 'เรดาร์กรมอุตุฯ ผ่านกรมชลฯ (เฉพาะไทย)');
+    legend('ฝน (มม./ชม.)', now.levels, RATE_COLORS, '', nowSrc === 'region' ? 'เรดาร์รวม RainViewer | คาดการณ์จากทิศทางและความเร็วของกลุ่มฝน ไม่รวมฝนก่อตัวใหม่' : 'เรดาร์กรมอุตุฯ ผ่านกรมชลฯ (เฉพาะไทย)');
   }
 
   // ---- แหล่ง th ----
@@ -352,7 +352,7 @@
   function credits() {
     let src, when = null;
     if (page === 'now') {
-      src = nowSrc === 'region' ? 'RainViewer (เรดาร์รวมภูมิภาค) | คาดการณ์ 2 ชม. คำนวณเอง' : 'กรมอุตุนิยมวิทยา ผ่านระบบสมดุลน้ำ กรมชลประทาน';
+      src = nowSrc === 'region' ? 'RainViewer (เรดาร์รวมภูมิภาค) | คาดการณ์ 2 ชม. จากทิศทางและความเร็วของกลุ่มฝน' : 'กรมอุตุนิยมวิทยา ผ่านระบบสมดุลน้ำ กรมชลประทาน';
       when = now.latest;
     } else {
       src = 'NOAA GFS' + (fc.meta && fc.meta.provider === 'rid' ? ' ผ่านระบบสมดุลน้ำ กรมชลประทาน' : '');
