@@ -34,6 +34,10 @@
         <button data-s="region" class="active">ทั้งภูมิภาค</button>
         <button data-s="th">ไทย (กรมอุตุฯ)</button>
       </div>
+      <div class="chips" aria-label="ชั้นข้อมูล">
+        <button data-l="rain">ฝน</button>
+        <button data-l="cloud">เมฆ</button>
+      </div>
     </div>
     <div class="slider-wrap">
       <div class="slider-lbl"><span>ย้อนหลัง 2 ชม.</span><span class="fc">คาดการณ์ 2 ชม.</span></div>
@@ -57,6 +61,13 @@
         <div id="fcKind" class="small">กำลังโหลด</div>
       </div>
     </div>
+    <div class="row src-row">
+      <div class="chips" aria-label="ชั้นข้อมูล">
+        <button data-l="rain">ฝน</button>
+        <button data-l="wind">ลม</button>
+        <button data-l="pres">ความกดอากาศ</button>
+      </div>
+    </div>
     <div class="slider-wrap">
       <div class="slider-lbl"><span>วันเริ่ม</span><span id="fcTotal" class="fc"></span></div>
       <input id="fcSlider" type="range" min="0" max="14" value="0" step="1">
@@ -74,6 +85,7 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="nowcast.js"></script>
+<script src="layers.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -1,11 +1,14 @@
-"""ดึงฝนคาดการณ์ GFS 0.25 องศา 15 วันจาก NOAA NOMADS โดยตรง (grib filter ตัดเฉพาะภูมิภาค)
+"""ดึงฝนคาดการณ์ ลม 10 ม. และความกดอากาศระดับน้ำทะเล จาก GFS 0.25 องศา 15 วัน ผ่าน NOAA NOMADS (grib filter ตัดเฉพาะภูมิภาค)
 
 ผลลัพธ์อยู่ในรูปแบบเดียวกับไฟล์ของระบบสมดุลน้ำ กรมชลประทาน:
   data/forecast/daily.bin  uint16 little-endian [วัน][แถว ใต้ไปเหนือ][คอลัมน์ ตะวันตกไปตะวันออก] ค่า x 0.1 = มม./วัน
   data/forecast/meta.json
+  data/forecast/wind.bin   int8 [เวลา 16 จุด ห่างกัน 24 ชม.][u แล้ว v][แถว][คอลัมน์] ค่า x 0.5 = ม./วินาที กริด 0.5 องศา
+  data/forecast/pres.bin   uint16 [เวลา][แถว][คอลัมน์] ค่า + 85000 = Pa
 
 วิธีคิดฝนรายวัน: ไฟล์ fNNN ของ GFS มีค่า APCP สะสมตั้งแต่ชั่วโมง 0 ถึง NNN
-ฝนวันที่ k = สะสมถึง f(24k+24) ลบ สะสมถึง f(24k) จึงโหลดแค่ 15 ไฟล์ (f024, f048, ... f360)
+ฝนวันที่ k = สะสมถึง f(24k+24) ลบ สะสมถึง f(24k) จึงโหลดแค่ 16 ไฟล์ (f000, f024, ... f360)
+ลมและความกดอากาศเป็นค่า ณ ต้นวันของแต่ละวัน (เวลาเดียวกับรอบ init)
 """
 import json
 import struct
@@ -24,13 +27,16 @@ DAYS = 15
 SCALE = 0.1
 NODATA = 65535
 TIMEOUT = 60
+WX_STEP = 2          # ลม/ความกดอากาศ เก็บทุก 2 จุด = 0.5 องศา
 PAUSE = 0.4          # เว้นจังหวะระหว่างคำขอ ไม่ให้ถี่เกินไปกับ NOMADS
 
 
 def _url(cycle: datetime, fh: int) -> str:
     ymd, hh = cycle.strftime("%Y%m%d"), cycle.strftime("%H")
     return (f"{FILTER}?dir=%2Fgfs.{ymd}%2F{hh}%2Fatmos&file=gfs.t{hh}z.pgrb2.0p25.f{fh:03d}"
-            f"&var_APCP=on&lev_surface=on&subregion=&toplat={NORTH}&leftlon={WEST}&rightlon={EAST}&bottomlat={SOUTH}")
+            f"&var_APCP=on&var_UGRD=on&var_VGRD=on&var_PRMSL=on"
+            f"&lev_surface=on&lev_10_m_above_ground=on&lev_mean_sea_level=on"
+            f"&subregion=&toplat={NORTH}&leftlon={WEST}&rightlon={EAST}&bottomlat={SOUTH}")
 
 
 def _get(url: str, tries: int = 3) -> bytes:
@@ -64,12 +70,21 @@ def latest_cycle(now: datetime | None = None) -> datetime:
     raise RuntimeError("ไม่พบรอบ GFS ที่พร้อมใช้ใน 30 ชม. ล่าสุด")
 
 
-def _total(buf: bytes, fh: int):
+def _total(msgs: list, fh: int):
     """ตารางฝนสะสมตั้งแต่ชั่วโมง 0 ถึง fh"""
-    for m in grib2.parse(buf):
-        if m.stat_type == 1 and m.forecast_hour == 0 and m.range_hours == fh:
+    for m in msgs:
+        if (m.cat, m.num) == (1, 8) and m.stat_type == 1 and m.forecast_hour == 0 and m.range_hours == fh:
             return m, grib2.to_rows(m)
     raise RuntimeError(f"ไม่พบค่าสะสม 0-{fh} ชม. ในไฟล์")
+
+
+def _field(msgs: list, cat: int, num: int):
+    """ตารางค่า ณ เวลานั้น (ลม / ความกดอากาศ) ย่อเหลือทุก WX_STEP จุด"""
+    for m in msgs:
+        if (m.cat, m.num) == (cat, num) and m.range_hours == 0:
+            rows = grib2.to_rows(m)
+            return [r[::WX_STEP] for r in rows[::WX_STEP]]
+    raise RuntimeError(f"ไม่พบตัวแปร {cat}/{num} ในไฟล์")
 
 
 def current_init() -> str | None:
@@ -78,7 +93,8 @@ def current_init() -> str | None:
         return None
     try:
         m = json.loads(p.read_text(encoding="utf-8"))
-        return m.get("init") if m.get("provider") == "noaa" else None
+        ok = m.get("provider") == "noaa" and m.get("wx") and (OUT / "wind.bin").exists() and (OUT / "pres.bin").exists()
+        return m.get("init") if ok else None
     except Exception:  # noqa: BLE001
         return None
 
@@ -92,9 +108,27 @@ def fetch(force: bool = False) -> dict:
     prev = None
     msg0 = None
     days = []
+    wind = bytearray()      # ต่อเวลา: u int8 แล้ว v int8 หน่วย 0.5 ม./วินาที
+    pres = []               # ต่อเวลา: uint16 = Pa - 85000
+    wx_shape = None
+
+    def add_wx(msgs):
+        nonlocal wx_shape
+        u, v, p = _field(msgs, 2, 2), _field(msgs, 2, 3), _field(msgs, 3, 1)
+        wx_shape = (len(u[0]), len(u))
+        for f in (u, v):
+            for row in f:
+                wind.extend(struct.pack("%db" % len(row), *[max(-127, min(127, round((x or 0) * 2))) for x in row]))
+        for row in p:
+            pres.extend(max(0, min(65535, round((x or 101300) - 85000))) for x in row)
+
+    add_wx(grib2.parse(_get(_url(cycle, 0))))      # f000 = ค่าวิเคราะห์ ณ เวลา init (ไม่มีฝนสะสม)
+    time.sleep(PAUSE)
     for d in range(1, DAYS + 1):
         fh = d * 24
-        m, rows = _total(_get(_url(cycle, fh)), fh)
+        msgs = grib2.parse(_get(_url(cycle, fh)))
+        add_wx(msgs)
+        m, rows = _total(msgs, fh)
         msg0 = msg0 or m
         if prev is None:
             day = rows
@@ -143,10 +177,15 @@ def fetch(force: bool = False) -> dict:
         "levels": {"acc": [5, 20, 50, 100, 200, 400]},
         "windowsDays": [1, 3, 7, 15],
         "maxAcc": {str(k): acc_max(k) for k in (1, 15)},
+        "wx": {"lat0": lat0, "lon0": lon0, "dlat": dlat * WX_STEP, "dlon": dlon * WX_STEP, "nx": wx_shape[0], "ny": wx_shape[1],
+               "times": DAYS + 1, "wind": {"file": "wind.bin", "dtype": "int8", "scale": 0.5, "order": "time, u then v, row, col"},
+               "pres": {"file": "pres.bin", "dtype": "uint16", "offsetPa": 85000}},
         "notes": ["NOAA GFS 0.25 deg APCP; daily rain = accumulated total at f(24k+24) minus f(24k); days start at the init hour"],
     }
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "daily.bin").write_bytes(struct.pack("<%dH" % len(flat), *flat))
+    (OUT / "wind.bin").write_bytes(bytes(wind))
+    (OUT / "pres.bin").write_bytes(struct.pack("<%dH" % len(pres), *pres))
     (OUT / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
     return {"init": init, "source": "gfs", "provider": "noaa", "grid": f"{nx}x{ny}", "skipped": False}
 

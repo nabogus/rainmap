@@ -24,7 +24,7 @@
   basemaps['แผนที่ถนน (OSM)'].addTo(map);
   const rainGroup = L.layerGroup().addTo(map);            // ชั้นฝน เปิดปิดได้จาก layer control
   const borders = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', { maxZoom: 12, opacity: 0.9, attribution: 'Esri' });
-  L.control.layers(basemaps, { 'ชั้นฝน': rainGroup, 'ชื่อเมือง / เส้นเขต (สำหรับดาวเทียม)': borders }, { position: 'topright', collapsed: true }).addTo(map);
+  L.control.layers(basemaps, { 'ชื่อเมือง / เส้นเขต (สำหรับดาวเทียม)': borders }, { position: 'topright', collapsed: true }).addTo(map);
   const TH_BOUNDS = L.latLngBounds([5.6, 97.3], [20.5, 105.7]);   // กรอบประเทศไทย
   const fitted = { now: false, fc: false };
   function fitThailandOnce(p) { if (fitted[p]) return; fitted[p] = true; map.invalidateSize(); map.fitBounds(TH_BOUNDS, { padding: [6, 6] }); }
@@ -105,6 +105,7 @@
     else if (st.status && st.loading) kind += ' | ' + st.status;
     $('nowKind').textContent = kind;
     if (url) showImage(url, st.bounds, nowcast ? 0.75 : 0.9);
+    if (layersOn.cloud) cloud.setTime(RL.cloudTime(f.time));
   }
   function nowStep(d) { if (!now.frames.length) return; now.cur = (now.cur + d + now.frames.length) % now.frames.length; nowRender(); }
   function nowPlay(on) {
@@ -229,6 +230,10 @@
       let t = 0;
       for (let d = fc.start; d < Math.min(g.days, fc.start + fc.win); d++) { const v = fc.data[d * g.nx * g.ny + r * g.nx + c]; if (v !== g.nodata) t += v * g.scale; }
       h += `<br>ฝนสะสม ${fc.win} วัน (เริ่ม ${fmtDate(fc.days[fc.start])}): <b>${t.toFixed(1)} มม.</b>`;
+      if (fc.wx) {
+        const d = wxAt(fc.start), u = RL.sampleGrid(d.g, d.u, ll.lat, ll.lng), v = RL.sampleGrid(d.g, d.v, ll.lat, ll.lng), pp = RL.sampleGrid(d.g, d.p, ll.lat, ll.lng);
+        if (u === u) h += `<br>ลม ${(Math.hypot(u, v) * 3.6).toFixed(0)} กม./ชม. จากทิศ${RL.windFrom(u, v)} | ${pp.toFixed(0)} hPa<br><span class="small">ณ ${fmtDateTime(fc.meta.dayStarts[fc.start])}</span>`;
+      }
     }
     return h;
   }
@@ -324,9 +329,12 @@
     const sl = $('fcSlider'); sl.max = maxStart; sl.value = fc.start;
     const d0 = fc.days[fc.start], d1 = fc.days[Math.min(nd - 1, fc.start + fc.win - 1)];
     $('fcTime').textContent = fc.win === 1 ? fmtDate(d0) : `${fmtDate(d0)} - ${fmtDate(d1)}`;
-    $('fcKind').textContent = `ฝนสะสม ${fc.win} วัน | ${fc.meta.source.toUpperCase()} รอบ ${fmtDateTime(fc.meta.init)}`;
+    const wxOn = fc.wx && (layersOn.wind || layersOn.pres);
+    $('fcKind').textContent = `ฝนสะสม ${fc.win} วัน | ${fc.meta.source.toUpperCase()} รอบ ${fmtDateTime(fc.meta.init)}`
+      + (wxOn ? ` | ${[layersOn.wind && 'ลม', layersOn.pres && 'ความกดอากาศ'].filter(Boolean).join(' + ')} ณ ${fmtDateTime(fc.meta.dayStarts[fc.start])}` : '');
     document.querySelectorAll('#fcWin button').forEach((b) => b.classList.toggle('active', +b.dataset.w === fc.win));
     showImage(fcImage(fc.win, fc.start), fc.bounds, 1);
+    applyLayers();
     credits();
   }
 
@@ -339,6 +347,14 @@
     fc.data = arr;
     fc.days = fc.meta.dayStarts.map((s) => new Date(new Date(s).getTime() + 7 * 3600e3)); // วันตามเวลาไทย
     fc.bounds = cornersToBounds(fc.meta.corners);
+    if (fc.meta.wx) {
+      try {
+        const w = fc.meta.wx, [wb, pb] = await Promise.all([w.wind.file, w.pres.file].map((f) => fetch('data/forecast/' + f + '?t=' + Date.now()).then((r) => { if (!r.ok) throw new Error(f); return r.arrayBuffer(); })));
+        const pv = new DataView(pb), pres = new Uint16Array(pb.byteLength / 2);
+        for (let i = 0; i < pres.length; i++) pres[i] = pv.getUint16(i * 2, true);
+        fc.wx = { g: { lat0: w.lat0, lon0: w.lon0, dlat: w.dlat, dlon: w.dlon, nx: w.nx, ny: w.ny }, wind: new Int8Array(wb), pres, scale: w.wind.scale, offsetPa: w.pres.offsetPa, cache: {} };
+      } catch (e) { fc.wx = null; }
+    }
     const nd = fc.grid.days;
     $('fcTicks').innerHTML = `<b>วันนี้</b><span>${fmtDate(fc.days[Math.floor(nd / 2)])}</span><span>${fmtDate(fc.days[nd - 1])}</span>`;
     $('fcTotal').textContent = `${fmtDate(fc.days[0])} ถึง ${fmtDate(fc.days[nd - 1])}`;
@@ -347,6 +363,70 @@
 
   document.querySelectorAll('#fcWin button').forEach((b) => { b.onclick = () => { fc.win = +b.dataset.w; fcRender(); }; });
   $('fcSlider').oninput = (e) => { fc.start = +e.target.value; fcRender(); };
+
+  // ---------- ชั้นข้อมูลเสริม: เมฆ ลม ความกดอากาศ ----------
+  const RL = window.RainLayers;
+  const layersOn = { rain: true, cloud: false, wind: false, pres: false };
+  try { Object.assign(layersOn, JSON.parse(localStorage.getItem('rainmap.layers') || '{}')); } catch (e) { /* ใช้ค่าเริ่มต้น */ }
+  const cloud = new RL.CloudLayer();
+  const wind = RL.WindLayer(map);
+  const presGroup = L.layerGroup();
+  const presRenderer = L.canvas({ padding: 0.5 });
+  let darkBase = false, presKey = '';
+  map.on('baselayerchange', (e) => { darkBase = e.name === 'ดาวเทียม' || e.name === 'โทนมืด'; wind.setDark(darkBase); presKey = ''; applyLayers(); });
+
+  function wxAt(t) {      // ข้อมูลลม/ความกดอากาศ ณ เวลาที่ t (ต้นวันของวันที่ t)
+    const w = fc.wx, n = w.g.nx * w.g.ny;
+    if (!w.cache[t]) {
+      const u = new Float32Array(n), v = new Float32Array(n), p = new Float32Array(n);
+      for (let i = 0; i < n; i++) { u[i] = w.wind[t * 2 * n + i] * w.scale; v[i] = w.wind[t * 2 * n + n + i] * w.scale; p[i] = (w.pres[t * n + i] + w.offsetPa) / 100; }
+      w.cache[t] = { g: w.g, u, v, p };
+    }
+    return w.cache[t];
+  }
+
+  function drawPressure(t) {
+    const key = t + ':' + darkBase;
+    if (key === presKey) return;
+    presKey = key; presGroup.clearLayers();
+    const d = wxAt(t), iso = RL.isobars(d.g, d.p), col = darkBase ? '#f2f2f2' : '#3a3f47';
+    for (const [lv, segs] of iso.lines) {
+      const bold = lv % 4 === 0;
+      L.polyline(segs, { renderer: presRenderer, color: col, weight: bold ? 1.6 : 0.7, opacity: bold ? 0.85 : 0.55, interactive: false }).addTo(presGroup);
+      if (bold && segs.length > 12) for (const f of [0.2, 0.55, 0.9]) {
+        const s = segs[Math.floor(segs.length * f)];
+        L.marker([(s[0][0] + s[1][0]) / 2, (s[0][1] + s[1][1]) / 2], { interactive: false, icon: L.divIcon({ className: 'iso-lbl' + (darkBase ? ' dark' : ''), html: String(lv), iconSize: [34, 14] }) }).addTo(presGroup);
+      }
+    }
+    const mark = (pt, ch, cls) => L.marker([pt.lat, pt.lon], { interactive: false, icon: L.divIcon({ className: 'hl ' + cls, html: `${ch}<span>${Math.round(pt.hpa)}</span>`, iconSize: [36, 36] }) }).addTo(presGroup);
+    iso.highs.forEach((p) => mark(p, 'H', 'hi'));
+    iso.lows.forEach((p) => mark(p, 'L', 'lo'));
+  }
+
+  function applyLayers() {
+    if (layersOn.rain) { if (!map.hasLayer(rainGroup)) rainGroup.addTo(map); } else if (map.hasLayer(rainGroup)) map.removeLayer(rainGroup);
+    const cloudOn = layersOn.cloud && page === 'now';
+    if (cloudOn) {
+      const f = now.frames[now.cur];
+      cloud.setTime(f ? RL.cloudTime(f.time) : 'default');
+      if (!map.hasLayer(cloud)) cloud.addTo(map);
+    } else if (map.hasLayer(cloud)) map.removeLayer(cloud);
+    const wxOk = page === 'fc' && fc.wx;
+    if (wxOk && layersOn.wind) { wind.setData(wxAt(fc.start)); wind.show(true); } else wind.show(false);
+    if (wxOk && layersOn.pres) { drawPressure(fc.start); if (!map.hasLayer(presGroup)) presGroup.addTo(map); } else if (map.hasLayer(presGroup)) map.removeLayer(presGroup);
+    document.querySelectorAll('.chips button').forEach((b) => {
+      b.classList.toggle('active', !!layersOn[b.dataset.l]);
+      if (b.dataset.l === 'wind' || b.dataset.l === 'pres') b.disabled = !fc.wx;
+    });
+  }
+  document.querySelectorAll('.chips button').forEach((b) => {
+    b.onclick = () => {
+      layersOn[b.dataset.l] = !layersOn[b.dataset.l];
+      try { localStorage.setItem('rainmap.layers', JSON.stringify(layersOn)); } catch (e) { /* ข้ามได้ */ }
+      applyLayers();
+      if (page === 'fc' && fc.meta) fcRender(); else nowLegend();
+    };
+  });
 
   // ---------- แหล่งที่มา / เวลาข้อมูล ----------
   function credits() {
@@ -371,6 +451,7 @@
     nowPlay(false); clearImage();
     fitThailandOnce(p);   // เปิดหน้าไหนครั้งแรก ให้เห็นประเทศไทยพอดี หลังจากนั้นไม่ยุ่งกับมุมมองของผู้ใช้
     credits();
+    applyLayers();
     if (p === 'now') { nowHeader(); nowLegend(); nowRender(); loadNow(); }
     else if (fc.meta) fcShow();
     location.hash = p;
@@ -381,9 +462,9 @@
   // ---------- เริ่ม ----------
   (async () => {
     const want = location.hash === '#fc' ? 'fc' : 'now';
-    nowHeader(); nowLegend();
+    nowHeader(); nowLegend(); applyLayers();
     const pn = loadNow();
-    const pf = loadFc().catch((e) => { $('fcKind').textContent = 'โหลด forecast ไม่ได้: ' + e.message; });
+    const pf = loadFc().then(() => applyLayers()).catch((e) => { $('fcKind').textContent = 'โหลด forecast ไม่ได้: ' + e.message; });
     if (want === 'fc') { await pf; showPage('fc'); }
     else { fitThailandOnce('now'); credits(); }
     await Promise.all([pn, pf]);

@@ -27,6 +27,8 @@ class Message:
     forecast_hour: int        # ชั่วโมงเริ่มช่วงสะสม นับจาก init
     range_hours: int          # ความยาวช่วงสะสม (ชม.)
     stat_type: int            # 1 = accumulation
+    cat: int = 0              # parameter category (เช่น 1 = ความชื้น, 2 = โมเมนตัม, 3 = มวล)
+    num: int = 0              # parameter number (APCP = 1/8, UGRD = 2/2, VGRD = 2/3, PRMSL = 3/1)
     values: list = field(default_factory=list)   # เรียงตาม scan (แถวแรก = lat1)
 
     @property
@@ -77,6 +79,7 @@ def _parse_message(m: bytes) -> Message:
     pos = 16
     grid = None
     fh = rng = stat = None
+    cat = num = 0
     ref = scale_e = scale_d = nbits = None
     npts = 0
     bitmap = None
@@ -103,6 +106,7 @@ def _parse_message(m: bytes) -> Message:
             tmpl = struct.unpack('>H', s[7:9])[0]
             if tmpl not in (8, 0):
                 raise ValueError('product template %d ไม่รองรับ' % tmpl)
+            cat, num = s[9], s[10]
             unit = s[17]
             fh = struct.unpack('>I', s[18:22])[0]
             if unit == 1:       # hour
@@ -155,7 +159,7 @@ def _parse_message(m: bytes) -> Message:
         pos += ln
     if grid is None or values is None:
         raise ValueError('ข้อความ GRIB ไม่ครบส่วน')
-    return Message(grid, fh, rng, stat, values)
+    return Message(grid, fh, rng, stat, cat, num, values)
 
 
 def to_rows(msg: Message) -> list:
