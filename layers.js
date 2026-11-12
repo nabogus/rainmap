@@ -10,6 +10,14 @@ window.RainLayers = (() => {
     options: { maxNativeZoom: 6, minZoom: 2, maxZoom: 12, opacity: 0.9, attribution: 'Himawari / NASA GIBS', zIndex: 5, className: 'cloud-tiles' },
     _time: 'default',
     setTime(t) { t = t || 'default'; if (t === this._time) return; this._time = t; if (this._map) this.redraw(); },
+    // ภาพต้นทางละเอียดประมาณ 2 กม. ต่อจุด (ซูม 6) ซูมเข้ากว่านั้นจะเห็นเป็นบล็อก จึงเกลี่ยทั้งชั้นด้วย blur ตามระดับซูม
+    _smooth() {
+      const c = this.getContainer(); if (!c || !this._map) return;
+      const over = this._map.getZoom() - this.options.maxNativeZoom;
+      c.style.filter = over > 0.3 ? `blur(${Math.min(40, 0.6 * Math.pow(2, over)).toFixed(1)}px)` : '';
+    },
+    onAdd(map) { L.GridLayer.prototype.onAdd.call(this, map); map.on('zoom zoomend', this._smooth, this); this._smooth(); },
+    onRemove(map) { map.off('zoom zoomend', this._smooth, this); L.GridLayer.prototype.onRemove.call(this, map); },
     createTile(coords, done) {
       const cv = document.createElement('canvas'); cv.width = cv.height = 256;
       const ctx = cv.getContext('2d', { willReadFrequently: true });
