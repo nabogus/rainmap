@@ -389,7 +389,10 @@
     $('fcTicks').innerHTML = `<b>วันนี้</b><span>${fmtDate(fc.days[Math.floor(nd / 2)])}</span><span>${fmtDate(fc.days[nd - 1])}</span>`;
     $('fcTotal').textContent = `${fmtDate(fc.days[0])} ถึง ${fmtDate(fc.days[nd - 1])}`;
   }
-  function fcShow() { legend('ฝนสะสม (มม.)', fc.meta.levels.acc, ACC_COLORS, '', 'ไล่สีระหว่างจุดกริด 0.25 องศา (ค่าประมาณ)'); fcRender(); }
+  function fcShow() {
+    const note = 'ไล่สีระหว่างจุดกริด 0.25 องศา (ค่าประมาณ)' + (fc.wx && layersOn.pres ? '<br>เส้นความกดอากาศ: <b style="color:#2f6bff">น้ำเงินเข้ม</b> = สูง อากาศเย็นแผ่ลงมา | <b style="color:#e0662a">ส้มแดง</b> = ต่ำ' : '');
+    legend('ฝนสะสม (มม.)', fc.meta.levels.acc, ACC_COLORS, '', note); fcRender();
+  }
 
   document.querySelectorAll('#fcWin button').forEach((b) => { b.onclick = () => { fc.win = +b.dataset.w; fcRender(); }; });
   $('fcSlider').oninput = (e) => { fc.start = +e.target.value; fcRender(); };
@@ -416,17 +419,32 @@
     return w.cache[t];
   }
 
+  // สีเส้นความกดอากาศ: ค่าสูง (มวลอากาศเย็น) ไล่ไปน้ำเงินเข้มถึงม่วง ค่าต่ำ (หย่อมความกดอากาศต่ำ/พายุ) ไล่ไปส้มถึงแดง
+  const PRES_STOPS = {
+    dark: [[1000, [255, 59, 48]], [1006, [255, 138, 61]], [1010, [255, 205, 130]], [1013, [235, 235, 235]], [1016, [160, 208, 255]], [1020, [77, 163, 255]], [1024, [47, 107, 255]], [1028, [150, 100, 255]]],
+    light: [[1000, [200, 30, 30]], [1006, [214, 110, 30]], [1010, [170, 120, 50]], [1013, [85, 90, 98]], [1016, [70, 140, 215]], [1020, [25, 100, 205]], [1024, [18, 60, 175]], [1028, [95, 45, 190]]],
+  };
+  function presColor(hpa) {
+    const st = PRES_STOPS[darkBase ? 'dark' : 'light'];
+    if (hpa <= st[0][0]) return `rgb(${st[0][1].join(',')})`;
+    for (let i = 1; i < st.length; i++) if (hpa <= st[i][0]) {
+      const [a, ca] = st[i - 1], [b, cb] = st[i], t = (hpa - a) / (b - a);
+      return `rgb(${ca.map((v, k) => Math.round(v + (cb[k] - v) * t)).join(',')})`;
+    }
+    return `rgb(${st[st.length - 1][1].join(',')})`;
+  }
   function drawPressure(t) {
     const key = t + ':' + darkBase;
     if (key === presKey) return;
     presKey = key; presGroup.clearLayers();
-    const d = wxAt(t), iso = RL.isobars(d.g, d.p), col = darkBase ? '#f2f2f2' : '#3a3f47';
+    const d = wxAt(t), iso = RL.isobars(d.g, d.p);
     for (const [lv, segs] of iso.lines) {
-      const bold = lv % 4 === 0;
-      L.polyline(segs, { renderer: presRenderer, color: col, weight: bold ? 1.6 : 0.7, opacity: bold ? 0.85 : 0.55, interactive: false }).addTo(presGroup);
+      const bold = lv % 4 === 0, col = presColor(lv);
+      const far = Math.min(1, Math.abs(lv - 1013) / 12);          // ยิ่งห่างจากค่าปกติ เส้นยิ่งหนาและชัด
+      L.polyline(segs, { renderer: presRenderer, color: col, weight: (bold ? 1.6 : 0.8) + far * 1.6, opacity: Math.min(1, (bold ? 0.85 : 0.6) + far * 0.3), interactive: false }).addTo(presGroup);
       if (bold && segs.length > 12) for (const f of [0.2, 0.55, 0.9]) {
         const s = segs[Math.floor(segs.length * f)];
-        L.marker([(s[0][0] + s[1][0]) / 2, (s[0][1] + s[1][1]) / 2], { interactive: false, icon: L.divIcon({ className: 'iso-lbl' + (darkBase ? ' dark' : ''), html: String(lv), iconSize: [34, 14] }) }).addTo(presGroup);
+        L.marker([(s[0][0] + s[1][0]) / 2, (s[0][1] + s[1][1]) / 2], { interactive: false, icon: L.divIcon({ className: 'iso-lbl', html: `<span style="background:${col};color:${darkBase ? '#0b1220' : '#fff'}">${lv}</span>`, iconSize: [34, 14] }) }).addTo(presGroup);
       }
     }
     const mark = (pt, ch, cls) => L.marker([pt.lat, pt.lon], { interactive: false, icon: L.divIcon({ className: 'hl ' + cls, html: `${ch}<span>${Math.round(pt.hpa)}</span>`, iconSize: [36, 36] }) }).addTo(presGroup);
@@ -456,7 +474,7 @@
       layersOn[b.dataset.l] = !layersOn[b.dataset.l];
       try { localStorage.setItem('rainmap.layers', JSON.stringify(layersOn)); } catch (e) { /* ข้ามได้ */ }
       applyLayers();
-      if (page === 'fc' && fc.meta) fcRender(); else nowLegend();
+      if (page === 'fc' && fc.meta) fcShow(); else nowLegend();
     };
   });
 
