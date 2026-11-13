@@ -147,7 +147,9 @@
 
   // ---- แหล่ง th ----
   async function loadTh(st) {
-    const idx = await (await fetch('data/radar/index.json?t=' + Date.now())).json();
+    const res = await fetch('data/radar/index.json?t=' + Date.now());
+    if (!res.ok) throw new Error('แหล่งเรดาร์ไทยล่มหรือยังไม่มีข้อมูล ลองใช้ "ทั้งภูมิภาค"');
+    const idx = await res.json();
     st.frames = [...idx.frames, ...idx.nowcast];
     st.obsLast = idx.frames.length - 1;
     st.bounds = cornersToBounds(idx.corners);

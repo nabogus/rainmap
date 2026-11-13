@@ -146,7 +146,11 @@ def main() -> int:
         tag = (fc.get("provider") or "x") + "-" + "".join(ch for ch in fc["init"] if ch.isdigit())
         with open(gh, "a", encoding="utf-8") as f:
             f.write("fc_tag=" + tag + chr(10))
-    return 0 if ok else 1
+    # แหล่งข้อมูลต้นทางล่มไม่ควรทำให้ deploy ทั้งเว็บล้มเหลว: ถือว่าล้มเหลวจริงเฉพาะเมื่อไม่มีไฟล์ forecast ให้ใช้เลย
+    # (เรดาร์ไทยที่ดึงไม่ได้ หน้าเว็บจะแจ้งเองว่าแหล่งนั้นใช้ไม่ได้ ส่วนเรดาร์ภูมิภาคโหลดตรงจาก browser)
+    if not ok:
+        print("คำเตือน: บางแหล่งดึงไม่ได้ ดู data/status.json")
+    return 0 if (OUT / "forecast" / "daily.bin").exists() else 1
 
 
 if __name__ == "__main__":
