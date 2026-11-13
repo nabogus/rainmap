@@ -15,16 +15,18 @@
   // ---------- แผนที่ ----------
   const map = L.map('map', { zoomControl: true, attributionControl: true, zoomSnap: 0.5 }).setView([13.5, 101], 6);
   const OSM_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+  const rb = window.RainBase(map);           // แผนที่ฐานของเราเอง + เส้นเขตแดน/ชื่อไทยชั้นบนสุด
+  const BASE_OWN = 'แผนที่อากาศ';
   const basemaps = {
+    [BASE_OWN]: rb.base,
     'แผนที่ถนน (OSM)': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 12, attribution: OSM_ATTR }),
     'ภูมิประเทศ': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 12, subdomains: 'abc', attribution: OSM_ATTR + ' | SRTM | &copy; <a href="https://opentopomap.org">OpenTopoMap</a>' }),
     'ดาวเทียม': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 12, attribution: 'Tiles &copy; Esri' }),
     'โทนมืด': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', { maxZoom: 12, attribution: 'Tiles &copy; Esri' }),
   };
-  basemaps['แผนที่ถนน (OSM)'].addTo(map);
+  rb.base.addTo(map); rb.top.addTo(map);
   const rainGroup = L.layerGroup().addTo(map);            // ชั้นฝน เปิดปิดได้จาก layer control
-  const borders = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', { maxZoom: 12, opacity: 0.9, attribution: 'Esri' });
-  L.control.layers(basemaps, { 'ชื่อเมือง / เส้นเขต (สำหรับดาวเทียม)': borders }, { position: 'topright', collapsed: true }).addTo(map);
+  L.control.layers(basemaps, { 'เส้นเขตแดนและชื่อ (ไทย)': rb.top }, { position: 'topright', collapsed: true }).addTo(map);
   const TH_BOUNDS = L.latLngBounds([5.6, 97.3], [20.5, 105.7]);   // กรอบประเทศไทย
   const fitted = { now: false, fc: false };
   function fitThailandOnce(p) { if (fitted[p]) return; fitted[p] = true; map.invalidateSize(); map.fitBounds(TH_BOUNDS, { padding: [6, 6] }); }
@@ -398,8 +400,9 @@
   const wind = RL.WindLayer(map);
   const presGroup = L.layerGroup();
   const presRenderer = L.canvas({ padding: 0.5 });
-  let darkBase = false, presKey = '';
-  map.on('baselayerchange', (e) => { darkBase = e.name === 'ดาวเทียม' || e.name === 'โทนมืด'; wind.setDark(darkBase); presKey = ''; applyLayers(); });
+  let darkBase = true, presKey = '';      // แผนที่อากาศ (ค่าเริ่มต้น) เป็นโทนเข้ม
+  wind.setDark(true);
+  map.on('baselayerchange', (e) => { darkBase = e.name === BASE_OWN || e.name === 'ดาวเทียม' || e.name === 'โทนมืด'; wind.setDark(darkBase); rb.setDark(darkBase); presKey = ''; applyLayers(); });
 
   function wxAt(t) {      // ข้อมูลลม/ความกดอากาศ ณ เวลาที่ t (ต้นวันของวันที่ t)
     const w = fc.wx, n = w.g.nx * w.g.ny;
