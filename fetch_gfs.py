@@ -1,14 +1,18 @@
-"""ดึงฝนคาดการณ์ ลม 10 ม. และความกดอากาศระดับน้ำทะเล จาก GFS 0.25 องศา 15 วัน ผ่าน NOAA NOMADS (grib filter ตัดเฉพาะภูมิภาค)
+"""ดึงฝนคาดการณ์ ลม 10 ม. ความกดอากาศระดับน้ำทะเล และอุณหภูมิต่ำสุด/สูงสุดรายวัน จาก GFS 0.25 องศา 15 วัน ผ่าน NOAA NOMADS (grib filter ตัดเฉพาะภูมิภาค)
 
 ผลลัพธ์อยู่ในรูปแบบเดียวกับไฟล์ของระบบสมดุลน้ำ กรมชลประทาน:
   data/forecast/daily.bin  uint16 little-endian [วัน][แถว ใต้ไปเหนือ][คอลัมน์ ตะวันตกไปตะวันออก] ค่า x 0.1 = มม./วัน
   data/forecast/meta.json
   data/forecast/wind.bin   int8 [เวลา 16 จุด ห่างกัน 24 ชม.][u แล้ว v][แถว][คอลัมน์] ค่า x 0.5 = ม./วินาที กริด 0.5 องศา
   data/forecast/pres.bin   uint16 [เวลา][แถว][คอลัมน์] ค่า + 85000 = Pa
+  data/forecast/temp.bin   uint8 [วันตามปฏิทินไทย 15 วัน][ต่ำสุด แล้ว สูงสุด][แถว][คอลัมน์] ค่า / 2 - 40 = องศาเซลเซียส 255 = ไม่มีข้อมูล กริด 0.25 องศา
 
 วิธีคิดฝนรายวัน: ไฟล์ fNNN ของ GFS มีค่า APCP สะสมตั้งแต่ชั่วโมง 0 ถึง NNN
-ฝนวันที่ k = สะสมถึง f(24k+24) ลบ สะสมถึง f(24k) จึงโหลดแค่ 16 ไฟล์ (f000, f024, ... f360)
+ฝนวันที่ k = สะสมถึง f(24k+24) ลบ สะสมถึง f(24k) ใช้ 16 ไฟล์ (f000, f024, ... f360) รวมกับไฟล์ของอุณหภูมิแล้วประมาณ 31 ถึง 46 ไฟล์ต่อรอบ
 ลมและความกดอากาศเป็นค่า ณ ต้นวันของแต่ละวัน (เวลาเดียวกับรอบ init)
+อุณหภูมิที่ 2 ม.: ต่ำสุด = TMIN ช่วง 6 ชม. ที่จบ 00Z (01:00-07:00 น.) สูงสุด = TMAX ช่วงที่จบ 12Z (13:00-19:00 น.)
+ของวันที่ k ตามปฏิทินไทย โดยวัน k = วันที่ของ (init + 7 ชม.) + k วัน ตรงกับ dayStarts[k] ในเวลาไทย
+ถ้าช่วงนั้นผ่านไปแล้ว ณ เวลา init (เช่นค่าต่ำสุดของวันนี้) จะไม่มีข้อมูล
 """
 import json
 import struct
@@ -27,6 +31,7 @@ DAYS = 15
 SCALE = 0.1
 NODATA = 65535
 TIMEOUT = 60
+TMAX_FH = 384        # GFS มีถึง f384
 WX_STEP = 2          # ลม/ความกดอากาศ เก็บทุก 2 จุด = 0.5 องศา
 PAUSE = 0.4          # เว้นจังหวะระหว่างคำขอ ไม่ให้ถี่เกินไปกับ NOMADS
 
@@ -34,8 +39,8 @@ PAUSE = 0.4          # เว้นจังหวะระหว่างคำ
 def _url(cycle: datetime, fh: int) -> str:
     ymd, hh = cycle.strftime("%Y%m%d"), cycle.strftime("%H")
     return (f"{FILTER}?dir=%2Fgfs.{ymd}%2F{hh}%2Fatmos&file=gfs.t{hh}z.pgrb2.0p25.f{fh:03d}"
-            f"&var_APCP=on&var_UGRD=on&var_VGRD=on&var_PRMSL=on"
-            f"&lev_surface=on&lev_10_m_above_ground=on&lev_mean_sea_level=on"
+            f"&var_APCP=on&var_UGRD=on&var_VGRD=on&var_PRMSL=on&var_TMIN=on&var_TMAX=on"
+            f"&lev_surface=on&lev_10_m_above_ground=on&lev_2_m_above_ground=on&lev_mean_sea_level=on"
             f"&subregion=&toplat={NORTH}&leftlon={WEST}&rightlon={EAST}&bottomlat={SOUTH}")
 
 
@@ -87,13 +92,21 @@ def _field(msgs: list, cat: int, num: int):
     raise RuntimeError(f"ไม่พบตัวแปร {cat}/{num} ในไฟล์")
 
 
+def _temp(msgs: list, num: int, stat: int, fh: int):
+    """ตาราง TMAX (num 4, stat 2) / TMIN (num 5, stat 3) ช่วง 6 ชม. ที่จบที่ชั่วโมง fh เป็นองศาเซลเซียส"""
+    for m in msgs:
+        if (m.cat, m.num) == (0, num) and m.stat_type == stat and m.range_hours == 6 and m.forecast_hour + 6 == fh:
+            return [[None if x is None else x - 273.15 for x in r] for r in grib2.to_rows(m)]
+    raise RuntimeError(f"ไม่พบอุณหภูมิ {num}/{stat} ช่วงจบ f{fh:03d}")
+
+
 def current_init() -> str | None:
     p = OUT / "meta.json"
     if not p.exists() or not (OUT / "daily.bin").exists():
         return None
     try:
         m = json.loads(p.read_text(encoding="utf-8"))
-        ok = m.get("provider") == "noaa" and m.get("wx") and (OUT / "wind.bin").exists() and (OUT / "pres.bin").exists()
+        ok = m.get("provider") == "noaa" and m.get("wx") and (OUT / "wind.bin").exists() and (OUT / "pres.bin").exists() and m.get("temp") and (OUT / "temp.bin").exists()
         return m.get("init") if ok else None
     except Exception:  # noqa: BLE001
         return None
@@ -122,12 +135,29 @@ def fetch(force: bool = False) -> dict:
         for row in p:
             pres.extend(max(0, min(65535, round((x or 101300) - 85000))) for x in row)
 
-    add_wx(grib2.parse(_get(_url(cycle, 0))))      # f000 = ค่าวิเคราะห์ ณ เวลา init (ไม่มีฝนสะสม)
-    time.sleep(PAUSE)
-    for d in range(1, DAYS + 1):
-        fh = d * 24
+    # อุณหภูมิ: ชั่วโมงพยากรณ์ของช่วงต่ำสุด (จบ 00Z) และสูงสุด (จบ 12Z) ของแต่ละวันตามปฏิทินไทย
+    local0 = (cycle + timedelta(hours=7)).date()
+    t_need = {}                                    # fh -> [(วัน k, 0=ต่ำสุด/1=สูงสุด)]
+    for k in range(DAYS):
+        d0 = datetime(local0.year, local0.month, local0.day, tzinfo=timezone.utc) + timedelta(days=k)
+        for which, end in ((0, d0), (1, d0 + timedelta(hours=12))):
+            fh = int((end - cycle).total_seconds() // 3600)
+            if 6 <= fh <= TMAX_FH:
+                t_need.setdefault(fh, []).append((k, which))
+    tgrid = {}                                     # (k, which) -> ตาราง
+    rain_fhs = [0] + [d * 24 for d in range(1, DAYS + 1)]
+
+    for fh in sorted(set(rain_fhs) | set(t_need)):
         msgs = grib2.parse(_get(_url(cycle, fh)))
+        for k, which in t_need.get(fh, []):
+            tgrid[(k, which)] = _temp(msgs, 5 if which == 0 else 4, 3 if which == 0 else 2, fh)
+        if fh not in rain_fhs:
+            time.sleep(PAUSE)
+            continue
         add_wx(msgs)
+        if fh == 0:                                # f000 = ค่าวิเคราะห์ ณ เวลา init (ไม่มีฝนสะสม)
+            time.sleep(PAUSE)
+            continue
         m, rows = _total(msgs, fh)
         msg0 = msg0 or m
         if prev is None:
@@ -180,12 +210,25 @@ def fetch(force: bool = False) -> dict:
         "wx": {"lat0": lat0, "lon0": lon0, "dlat": dlat * WX_STEP, "dlon": dlon * WX_STEP, "nx": wx_shape[0], "ny": wx_shape[1],
                "times": DAYS + 1, "wind": {"file": "wind.bin", "dtype": "int8", "scale": 0.5, "order": "time, u then v, row, col"},
                "pres": {"file": "pres.bin", "dtype": "uint16", "offsetPa": 85000}},
-        "notes": ["NOAA GFS 0.25 deg APCP; daily rain = accumulated total at f(24k+24) minus f(24k); days start at the init hour"],
+        "temp": {"file": "temp.bin", "dtype": "uint8", "decode": "v / 2 - 40 (degC), 255 = no data", "order": "day, min then max, row, col",
+                 "days": DAYS, "dates": [(local0 + timedelta(days=k)).isoformat() for k in range(DAYS)],
+                 "minWindow": "01:00-07:00 ICT", "maxWindow": "13:00-19:00 ICT",
+                 "have": [[(k, 0) in tgrid, (k, 1) in tgrid] for k in range(DAYS)]},
+        "notes": ["NOAA GFS 0.25 deg APCP; daily rain = accumulated total at f(24k+24) minus f(24k); days start at the init hour",
+                  "2 m temperature: min = 6 h TMIN ending 00Z, max = 6 h TMAX ending 12Z, per Thai calendar day"],
     }
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "daily.bin").write_bytes(struct.pack("<%dH" % len(flat), *flat))
     (OUT / "wind.bin").write_bytes(bytes(wind))
     (OUT / "pres.bin").write_bytes(struct.pack("<%dH" % len(pres), *pres))
+    tb = bytearray([255]) * (DAYS * 2 * nx * ny)
+    for (k, which), rows in tgrid.items():
+        off = (k * 2 + which) * nx * ny
+        for j, row in enumerate(rows):
+            for i, v in enumerate(row):
+                if v is not None:
+                    tb[off + j * nx + i] = max(0, min(254, round((v + 40) * 2)))
+    (OUT / "temp.bin").write_bytes(bytes(tb))
     (OUT / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
     return {"init": init, "source": "gfs", "provider": "noaa", "grid": f"{nx}x{ny}", "skipped": False}
 

@@ -84,3 +84,7 @@ input[type=range]{width:100%;margin:6px 0 2px}
 .map-lbl.city i{position:absolute;left:-3px;top:-3px;width:6px;height:6px;border-radius:50%;background:#fff;box-shadow:0 0 0 1.5px rgba(0,0,0,.6)}
 .leaflet-labelPane-pane.light .map-lbl span,.light .map-lbl span{color:#1b2430;text-shadow:0 0 3px #fff,0 0 3px #fff,0 1px 2px #fff}
 .light .map-lbl.city i{background:#1b2430;box-shadow:0 0 0 1.5px rgba(255,255,255,.8)}
+.seg button:disabled{opacity:.4;cursor:default}
+.seg-sm button{padding:5px 10px;font-size:12px}
+#tempMode[hidden]{display:none}
+.src-row{gap:8px}
