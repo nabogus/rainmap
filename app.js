@@ -214,10 +214,14 @@
 
   async function loadNow(force) {
     const st = now, src = nowSrc;
-    if (st.loading || (st.ready && !force)) { if (page === 'now') { nowHeader(); nowLegend(); nowRender(); } return; }
-    st.loading = true; st.error = null;
+    // โหลดค้างเกิน 3 นาที (เช่น มือถือพักแท็บกลางคัน แล้ว fetch ไม่จบ) ถือว่าล้มเหลว ให้โหลดใหม่ได้
+    const stuck = st.loading && Date.now() - st.loadAt > 3 * 60000;
+    if ((st.loading && !stuck) || (st.ready && !force)) { if (page === 'now') { nowHeader(); nowLegend(); nowRender(); } return; }
+    const gen = st.gen = (st.gen || 0) + 1;
+    st.loading = true; st.loadAt = Date.now(); st.error = null;
     try { await (src === 'region' ? loadRegion(st) : loadTh(st)); }
-    catch (e) { st.error = e.message || String(e); st.status = ''; if (isActive(st)) { nowHeader(); nowRender(); } }
+    catch (e) { if (gen === st.gen) { st.error = e.message || String(e); st.status = ''; if (isActive(st)) { nowHeader(); nowRender(); } } }
+    if (gen !== st.gen) return;            // มีรอบใหม่กว่าเริ่มไปแล้ว
     st.loading = false;
     if (isActive(st)) nowRender();
   }
@@ -237,8 +241,19 @@
   $('nowSlider').oninput = (e) => { nowPlay(false); now.cur = +e.target.value; nowRender(); };
   document.querySelectorAll('#nowSrc button').forEach((b) => { b.onclick = () => setNowSrc(b.dataset.s); });
 
-  // โหลดข้อมูลใหม่ทุก 10 นาทีถ้าหน้ายังเปิดอยู่
-  setInterval(() => { if (!document.hidden && page === 'now' && !now.loading && !nowTimer) { const keep = now.cur === now.obsLast; loadNow(true).then(() => { if (keep) { now.cur = now.obsLast; nowRender(); } }); } }, 10 * 60000);
+  // โหลดข้อมูลใหม่เมื่อเริ่มโหลดรอบก่อนมาแล้ว 10 นาที ตรวจทุกนาที และทันทีที่กลับมาเปิดแท็บ
+  // (มือถือพักแท็บที่ไม่ได้ดู ตัวจับเวลาจึงไม่เดิน กลับมาแล้วต้องเช็กเอง)
+  function refreshNow() {
+    if (document.hidden || page !== 'now' || nowTimer) return;
+    if (Date.now() - (now.loadAt || 0) < 10 * 60000) return;
+    if (now.loading && Date.now() - now.loadAt < 3 * 60000) return;
+    const keep = now.cur === now.obsLast;
+    loadNow(true).then(() => { if (keep && page === 'now') { now.cur = now.obsLast; nowRender(); } });
+  }
+  setInterval(refreshNow, 60000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { if (page === 'now') nowHeader(); refreshNow(); } });
+  window.addEventListener('pageshow', refreshNow);
+  window.addEventListener('focus', refreshNow);
 
   // ---------- ตำแหน่งปัจจุบัน ----------
   const loc = { marker: null, circle: null, latlng: null };
