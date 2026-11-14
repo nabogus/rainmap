@@ -49,6 +49,8 @@ jobs:
           mkdir -p site
           cp index.html app.js basemap.js basemap.json nowcast.js layers.js style.css site/
           cp -r data site/data
+          # ใส่รหัส commit ท้ายชื่อไฟล์ js/css ให้ browser โหลดชุดใหม่พร้อมกันทุกครั้งที่ deploy
+          sed -i "s/?v=dev/?v=${GITHUB_SHA::7}/g" site/index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

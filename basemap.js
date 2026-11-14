@@ -15,6 +15,14 @@ window.RainBase = (map) => {
   const borderLines = [], provLines = [];
   const groups = [];                           // { g, show(zoom) }
   let dark = true;
+  const tempLabels = [];                       // ป้ายเมือง/จังหวัดที่แสดงอุณหภูมิได้
+  let tempFn = null;
+  function fillTemp(m) {
+    const el = m.getElement(); if (!el) return;
+    const tv = el.querySelector('.tv'); if (!tv) return;
+    const v = tempFn ? tempFn(m.getLatLng().lat, m.getLatLng().lng) : null;
+    tv.textContent = v === null || v === undefined || v !== v ? '' : ` ${Math.round(v)}°`;
+  }
 
   const ll = (ring) => ring.map((p) => [p[1], p[0]]);
   const lineStyle = () => ({ color: dark ? '#ffffff' : '#30363d', opacity: dark ? 0.78 : 0.7, weight: 1 });
@@ -42,7 +50,8 @@ window.RainBase = (map) => {
     for (const p of d.provinces) {
       const pl = L.polygon(p.rings.map((r) => [ll(r)]), Object.assign({ renderer: lineR, fill: false, interactive: false }, provStyle()));
       provLines.push(pl); gProvLine.addLayer(pl);
-      gProvLbl.addLayer(label(p.lat, p.lon, 'prov', `<span>${p.th}</span>`));
+      const pm = label(p.lat, p.lon, 'prov', `<span>${p.th}<b class="tv"></b></span>`);
+      pm.on('add', () => fillTemp(pm)); tempLabels.push(pm); gProvLbl.addLayer(pm);
     }
     for (const c of d.countries) if (c.th) gCountry.addLayer(label(c.lat, c.lon, 'country', `<span>${c.th}</span>`));
     groups.push({ g: gBorder, show: () => true });
@@ -53,7 +62,10 @@ window.RainBase = (map) => {
     const MIN_Z = [3.5, 4.5, 5.5, 6.5, 7];
     for (let rank = 0; rank <= 4; rank++) for (const inTH of [true, false]) {
       const g = L.layerGroup();
-      d.cities.filter((c) => c.rank === rank && c.inTH === inTH).forEach((c) => g.addLayer(label(c.lat, c.lon, 'city', `<i></i><span>${c.th}</span>`)));
+      d.cities.filter((c) => c.rank === rank && c.inTH === inTH).forEach((c) => {
+        const cm = label(c.lat, c.lon, 'city', `<i></i><span>${c.th}<b class="tv"></b></span>`);
+        cm.on('add', () => fillTemp(cm)); tempLabels.push(cm); g.addLayer(cm);
+      });
       groups.push({ g, show: (z) => z >= MIN_Z[rank] && (!inTH || z < 7) });
     }
     refresh();
@@ -67,6 +79,8 @@ window.RainBase = (map) => {
   fetch('basemap.json').then((r) => r.json()).then(build).catch(() => { /* ไม่มีไฟล์ก็ยังใช้แผนที่ฐานแบบ tile ได้ */ });
 
   return {
+    // fn(lat, lon) -> องศาเซลเซียส หรือ null; ส่ง null เพื่อซ่อนตัวเลข
+    setTemps(fn) { tempFn = fn; tempLabels.forEach(fillTemp); },
     base, top,
     setDark(v) {
       dark = v;

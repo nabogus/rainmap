@@ -137,6 +137,7 @@
     if (url) showImage(url, st.bounds, nowcast ? 0.75 : 0.9);
     if (layersOn.cloud) cloud.show(RL.cloudTime(f.time));
     tnowShow();
+    cityTemps();
     if (tnowOn() && fc.tnow) { const h = tnowHour(f.time); $('nowKind').textContent += h >= 0 ? ` | อุณหภูมิ ${fmtTime(new Date(fc.tnow.t0 + h * 3600e3).toISOString())} (พยากรณ์)` : ' | อุณหภูมิ: ไม่มีข้อมูลเวลานี้'; }
   }
   function nowStep(d) { if (!now.frames.length) return; now.cur = (now.cur + d + now.frames.length) % now.frames.length; nowRender(); }
@@ -483,6 +484,7 @@
       else showImage(tempHave(fc.start, win, which) ? tempImage(fc.start, win, which) : TRANSPARENT, fc.bounds, 1);
     } else showImage(fcImage(fc.win, fc.start), fc.bounds, 1);
     applyLayers();
+    cityTemps();
     credits();
   }
 
@@ -586,6 +588,7 @@
       cloudPreload();
     } else cloud.hide();
     tnowShow();
+    cityTemps();
     const wxOk = page === 'fc' && fc.wx;
     if (wxOk && layersOn.wind) { wind.setData(wxAt(fc.start)); wind.show(true); } else wind.show(false);
     if (wxOk && layersOn.pres) { drawPressure(fc.start); if (!map.hasLayer(presGroup)) presGroup.addTo(map); } else if (map.hasLayer(presGroup)) map.removeLayer(presGroup);
@@ -655,6 +658,24 @@
     else { tnowOverlay.setUrl(url); tnowOverlay.setOpacity(op); }
   }
   const tempBar = () => `<div class="tbar" style="background:linear-gradient(to right,${[8, 14, 20, 26, 32, 38].map((c) => `rgb(${tempRGB(c).join(',')})`).join(',')})"></div><div class="tbar-l"><span>8</span><span>20</span><span>32</span><span>38 °C</span></div>`;
+
+  // ตัวเลขอุณหภูมิข้างชื่อเมือง/จังหวัด: ตามชั้นอุณหภูมิที่เปิดอยู่ในหน้านั้น
+  function cityTemps() {
+    if (!rb.setTemps) return;                  // basemap.js รุ่นเก่าค้างใน cache
+    if (tnowOn() && fc.tnow) {
+      const f = now.frames[now.cur], h = tnowHour(f ? f.time : new Date().toISOString());
+      rb.setTemps(h < 0 ? null : (lat, lon) => tnowAt(h, lat, lon));
+    } else if (page === 'fc' && layersOn.temp && fc.temp) {
+      const which = tempWhich(), win = fc.win, start = fc.start, key = start + ':' + win + ':' + which;
+      if (!fc.temp.wcache) fc.temp.wcache = new Map();
+      if (!fc.temp.wcache.has(key)) fc.temp.wcache.set(key, tempWindow(start, win, which));
+      const vals = fc.temp.wcache.get(key), g = fc.grid;
+      rb.setTemps((lat, lon) => {
+        const r = Math.round((lat - g.lat0) / g.dlat), c = Math.round((lon - g.lon0) / g.dlon);
+        return r < 0 || c < 0 || r >= g.ny || c >= g.nx ? null : vals[r * g.nx + c];
+      });
+    } else rb.setTemps(null);
+  }
 
   // ---------- แหล่งที่มา / เวลาข้อมูล ----------
   function credits() {

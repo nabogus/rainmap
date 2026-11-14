@@ -90,3 +90,5 @@ input[type=range]{width:100%;margin:6px 0 2px}
 .src-row{gap:8px}
 .legend .tbar{height:8px;border-radius:2px;margin-top:4px;max-width:150px;border:1px solid rgba(0,0,0,.15)}
 .legend .tbar-l{display:flex;justify-content:space-between;max-width:150px;font-size:10px;color:var(--mute)}
+.map-lbl .tv{margin-left:3px;font-weight:700;color:#ffe08a}
+.light .map-lbl .tv{color:#b45309}
