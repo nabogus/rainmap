@@ -84,7 +84,7 @@
   const NC = window.RainNowcast;
   const newState = () => ({ ready: false, loading: false, error: null, frames: [], urls: [], codes: [], cur: 0, obsLast: 0, bounds: null, latest: null, levels: [0.2, 1, 2, 5, 10, 20], status: '', motion: null });
   const nowStates = { region: newState(), th: newState() };
-  let nowSrc = 'region', now = nowStates.region, nowTimer = null;
+  let nowSrc = 'region', now = nowStates.region, nowTimer = null, motionSeq = 0;
   try { const s = localStorage.getItem('rainmap.nowSrc'); if (s === 'th' || s === 'region') { nowSrc = s; now = nowStates[s]; } } catch (e) { /* ไม่มี storage ก็ใช้ค่าเริ่มต้น */ }
   const tick = () => new Promise((r) => setTimeout(r, 0));
 
@@ -135,7 +135,7 @@
     else if (st.status && st.loading) kind += ' | ' + st.status;
     $('nowKind').textContent = kind;
     if (url) showImage(url, st.bounds, nowcast ? 0.75 : 0.9);
-    if (layersOn.cloud) cloud.show(RL.cloudTime(f.time));
+    if (layersOn.cloud) cloud.show(cloudKey(f));
     tnowShow();
     cityTemps();
     if (tnowOn() && fc.tnow) { const h = tnowHour(f.time); $('nowKind').textContent += h >= 0 ? ` | อุณหภูมิ ${fmtTime(new Date(fc.tnow.t0 + h * 3600e3).toISOString())} (พยากรณ์)` : ' | อุณหภูมิ: ไม่มีข้อมูลเวลานี้'; }
@@ -198,6 +198,7 @@
     const GAP = 3, small = st.codes.slice(0, nObs).map((c) => NC.shrink(c)), pairs = [];
     for (let i = nObs - 1; i - GAP >= 0 && pairs.length < 3; i -= GAP) pairs.push([small[i], small[i - GAP]]);
     st.motion = pairs.length ? await NC.motion(pairs, tick) : null;
+    st.perStep = 1 / GAP; st.motionId = ++motionSeq;
     for (let k = 1; k <= NC.N_FC; k++) {
       const i = st.obsLast + k;
       st.codes[i] = st.motion ? NC.advect(st.codes[st.obsLast], st.motion, 1 / GAP, k) : st.codes[st.obsLast];
@@ -206,7 +207,7 @@
       await tick();
     }
     st.status = '';
-    if (isActive(st)) nowRender();
+    if (isActive(st)) { nowRender(); cloudPreload(); }
   }
 
   async function loadNow(force) {
@@ -526,7 +527,19 @@
   const RL = window.RainLayers;
   const layersOn = { rain: true, cloud: false, wind: false, pres: false, temp: false, tempMode: 'min', tnow: false };
   try { Object.assign(layersOn, JSON.parse(localStorage.getItem('rainmap.layers') || '{}')); } catch (e) { /* ใช้ค่าเริ่มต้น */ }
-  const cloud = RL.CloudStack(map);
+  // เมฆหลังเวลาภาพดาวเทียมล่าสุด: เลื่อนตามทิศทางและความเร็วของกลุ่มฝน (ใช้สนามเดียวกับคาดการณ์ฝน)
+  // แหล่งไทยไม่มีสนามการเคลื่อนที่ จึงยืมของทั้งภูมิภาคถ้าโหลดไว้แล้ว
+  const motionSrc = () => (now.motion ? now : nowStates.region.motion ? nowStates.region : null);
+  function cloudKey(f) {
+    const t = RL.cloudTime(f.time), m = motionSrc();
+    const k = Math.round((Date.parse(f.time) - Date.parse(t)) / (NC.STEP_MIN * 60000));
+    return m && k > 0 ? `${t}@${k}@${m.motionId}` : t;
+  }
+  const cloud = RL.CloudStack(map, (key) => {
+    const [, k, id] = key.split('@');
+    const st = Object.values(nowStates).find((s) => s.motion && String(s.motionId) === id);
+    return st ? (wx, wy, out) => NC.shiftAt(st.motion, st.perStep, +k, wx, wy, out) : null;
+  });
   const wind = RL.WindLayer(map);
   const presGroup = L.layerGroup();
   const presRenderer = L.canvas({ padding: 0.5 });
@@ -577,14 +590,14 @@
     iso.lows.forEach((p) => mark(p, 'L', 'lo'));
   }
 
-  function cloudPreload() { if (layersOn.cloud && page === 'now' && now.frames.length) cloud.preload([...new Set(now.frames.map((f) => RL.cloudTime(f.time)))]); }
+  function cloudPreload() { if (layersOn.cloud && page === 'now' && now.frames.length) cloud.preload([...new Set(now.frames.map(cloudKey))]); }
   function applyLayers() {
     const fieldOn = page === 'fc' ? (layersOn.rain || layersOn.temp) : layersOn.rain;
     if (fieldOn) { if (!map.hasLayer(rainGroup)) rainGroup.addTo(map); } else if (map.hasLayer(rainGroup)) map.removeLayer(rainGroup);
     const cloudOn = layersOn.cloud && page === 'now';
     if (cloudOn) {
       const f = now.frames[now.cur];
-      cloud.show(f ? RL.cloudTime(f.time) : 'default');
+      cloud.show(f ? cloudKey(f) : 'default');
       cloudPreload();
     } else cloud.hide();
     tnowShow();
@@ -682,7 +695,7 @@
     let src, when = null;
     if (page === 'now') {
       src = nowSrc === 'region' ? 'RainViewer (เรดาร์รวมภูมิภาค) | คาดการณ์ 2 ชม. จากทิศทางและความเร็วของกลุ่มฝน' : 'เรดาร์กรมอุตุนิยมวิทยา (ยังไม่ผ่านการตรวจสอบ) | ประมวลผลและคาดการณ์โดยระบบสมดุลน้ำ (ทดลอง)';
-      if (layersOn.cloud) src += ' | เมฆ: Himawari ผ่าน NASA GIBS';
+      if (layersOn.cloud) src += ' | เมฆ: Himawari ผ่าน NASA GIBS (หลังภาพล่าสุดเลื่อนตามกลุ่มฝน)';
       if (tnowOn()) src += ' | อุณหภูมิ: NOAA GFS';
       when = now.latest;
     } else {

@@ -6,8 +6,78 @@ window.RainLayers = (() => {
   // tile ของ GIBS เป็นภาพอินฟราเรดทึบ: โทนเทา ยิ่งสว่าง = ยอดเมฆยิ่งเย็น/สูง ส่วนยอดเมฆเย็นจัดถูกระบายสี
   // แปลงเป็นเมฆสีขาวโปร่งแสง เพื่อวางทับแผนที่และชั้นฝนได้
   const GIBS = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/Himawari_AHI_Band13_Clean_Infrared/default/';
+  // tile ต้นทางที่แปลงเป็นเมฆโปร่งแสงแล้ว เก็บไว้ใช้ซ้ำ (ชั้นเมฆช่วงคาดการณ์ทุกชั้นใช้ภาพต้นทางเดียวกัน)
+  const srcCache = new Map();
+  function cloudTile(time, z, x, y) {
+    const n = 1 << z; x = ((x % n) + n) % n;
+    if (y < 0 || y >= n) return Promise.resolve(null);
+    const key = `${time}/${z}/${x}/${y}`;
+    if (srcCache.has(key)) return srcCache.get(key);
+    if (srcCache.size > 600) srcCache.clear();
+    const pr = new Promise((res) => {
+      const load = (t) => {
+        const img = new Image(); img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          const cv = document.createElement('canvas'); cv.width = cv.height = 256;
+          const ctx = cv.getContext('2d', { willReadFrequently: true });
+          ctx.drawImage(img, 0, 0);
+          const im = ctx.getImageData(0, 0, 256, 256), d = im.data;
+          for (let p = 0; p < d.length; p += 4) {
+            const r = d[p], g = d[p + 1], b = d[p + 2];
+            if (Math.abs(r - g) < 10 && Math.abs(g - b) < 10) {            // โทนเทา
+              const a = Math.max(0, Math.min(1, (r - 122) / 68));   // ทะเล/พื้นดินอุ่น ~100-115, เมฆต่ำ ~120-140, เมฆกลาง-สูง 150+
+              d[p] = 245; d[p + 1] = 247; d[p + 2] = 250; d[p + 3] = Math.round(Math.pow(a, 1.4) * 225);
+            } else { d[p] = d[p + 1] = d[p + 2] = 255; d[p + 3] = 240; }     // ยอดเมฆเย็นจัด = เมฆหนา
+          }
+          res(im);
+        };
+        // เวลาที่ขอไม่มีภาพ (ใหม่เกินไปหรือเก่าเกิน 4 ชม.) ใช้ภาพล่าสุดแทน
+        img.onerror = () => { if (t !== 'default') load('default'); else res(null); };
+        img.src = `${GIBS}${t}/GoogleMapsCompatible_Level6/${z}/${y}/${x}.png`;
+      };
+      load(time);
+    });
+    srcCache.set(key, pr);
+    pr.then((im) => { if (!im) srcCache.delete(key); });
+    return pr;
+  }
+
+  // เลื่อนเมฆตามสนามการเคลื่อนที่: shift(wx, wy, out) -> ระยะเลื่อนเป็นสัดส่วนของโลก
+  // คำนวณระยะเลื่อนที่มุมช่องละ 16 px แล้วเกลี่ยทีละพิกเซล ดึงต้นทางจาก tile ข้างเคียงได้
+  async function warpTile(time, c, shift) {
+    const C = 16, G = 256 / C + 1, scale = 256 * (1 << c.z), DX = new Float32Array(G * G), DY = new Float32Array(G * G), v = [0, 0];
+    let lo = [0, 0], hi = [0, 0];
+    for (let j = 0; j < G; j++) for (let i = 0; i < G; i++) {
+      shift((c.x * 256 + i * C) / scale, (c.y * 256 + j * C) / scale, v);
+      const dx = Math.max(-250, Math.min(250, v[0] * scale)), dy = Math.max(-250, Math.min(250, v[1] * scale));
+      DX[j * G + i] = dx; DY[j * G + i] = dy;
+      lo = [Math.min(lo[0], dx), Math.min(lo[1], dy)]; hi = [Math.max(hi[0], dx), Math.max(hi[1], dy)];
+    }
+    // tile ต้นทางที่ต้องใช้ (ต้นทาง = ตำแหน่งปลายทาง - ระยะเลื่อน)
+    const tx0 = Math.floor(-hi[0] / 256), tx1 = Math.floor((255 - lo[0]) / 256), ty0 = Math.floor(-hi[1] / 256), ty1 = Math.floor((255 - lo[1]) / 256);
+    const src = {};
+    await Promise.all([...Array((tx1 - tx0 + 1) * (ty1 - ty0 + 1)).keys()].map(async (q) => {
+      const i = tx0 + (q % (tx1 - tx0 + 1)), j = ty0 + Math.floor(q / (tx1 - tx0 + 1));
+      src[`${i},${j}`] = await cloudTile(time, c.z, c.x + i, c.y + j);
+    }));
+    const out = new ImageData(256, 256), o = out.data;
+    for (let y = 0; y < 256; y++) {
+      const fy = y / C, j0 = Math.min(G - 2, Math.floor(fy)), ty = fy - j0;
+      for (let x = 0; x < 256; x++) {
+        const fx = x / C, i0 = Math.min(G - 2, Math.floor(fx)), tx = fx - i0, a = j0 * G + i0;
+        const dx = (DX[a] * (1 - tx) + DX[a + 1] * tx) * (1 - ty) + (DX[a + G] * (1 - tx) + DX[a + G + 1] * tx) * ty;
+        const dy = (DY[a] * (1 - tx) + DY[a + 1] * tx) * (1 - ty) + (DY[a + G] * (1 - tx) + DY[a + G + 1] * tx) * ty;
+        const sx = Math.round(x - dx), sy = Math.round(y - dy);
+        const im = src[`${Math.floor(sx / 256)},${Math.floor(sy / 256)}`]; if (!im) continue;
+        const p = (((sy & 255) * 256) + (sx & 255)) * 4, q = (y * 256 + x) * 4, d = im.data;
+        o[q] = d[p]; o[q + 1] = d[p + 1]; o[q + 2] = d[p + 2]; o[q + 3] = d[p + 3];
+      }
+    }
+    return out;
+  }
+
   const CloudLayer = L.GridLayer.extend({
-    options: { pane: 'cloudPane', maxNativeZoom: 6, minZoom: 2, maxZoom: 12, opacity: 0.9, attribution: 'Himawari / NASA GIBS', zIndex: 5, className: 'cloud-tiles' },
+    options: { pane: 'cloudPane', maxNativeZoom: 6, minZoom: 2, maxZoom: 12, opacity: 0.9, attribution: 'Himawari / NASA GIBS', zIndex: 5, className: 'cloud-tiles', shift: null },
     _time: 'default',
     setTime(t) { t = t || 'default'; if (t === this._time) return; this._time = t; if (this._map) this.redraw(); },
     // ภาพต้นทางละเอียดประมาณ 2 กม. ต่อจุด (ซูม 6) ซูมเข้ากว่านั้นจะเห็นเป็นบล็อก จึงเกลี่ยทั้งชั้นด้วย blur ตามระดับซูม
@@ -20,41 +90,28 @@ window.RainLayers = (() => {
     onRemove(map) { map.off('zoom zoomend', this._smooth, this); L.GridLayer.prototype.onRemove.call(this, map); },
     createTile(coords, done) {
       const cv = document.createElement('canvas'); cv.width = cv.height = 256;
-      const ctx = cv.getContext('2d', { willReadFrequently: true });
-      const load = (time) => {
-        const img = new Image(); img.crossOrigin = 'anonymous';
-        img.onload = () => {
-          ctx.drawImage(img, 0, 0);
-          const im = ctx.getImageData(0, 0, 256, 256), d = im.data;
-          for (let p = 0; p < d.length; p += 4) {
-            const r = d[p], g = d[p + 1], b = d[p + 2];
-            if (Math.abs(r - g) < 10 && Math.abs(g - b) < 10) {            // โทนเทา
-              const a = Math.max(0, Math.min(1, (r - 122) / 68));   // ทะเล/พื้นดินอุ่น ~100-115, เมฆต่ำ ~120-140, เมฆกลาง-สูง 150+
-              d[p] = 245; d[p + 1] = 247; d[p + 2] = 250; d[p + 3] = Math.round(Math.pow(a, 1.4) * 225);
-            } else { d[p] = d[p + 1] = d[p + 2] = 255; d[p + 3] = 240; }     // ยอดเมฆเย็นจัด = เมฆหนา
-          }
-          ctx.putImageData(im, 0, 0);
-          done(null, cv);
-        };
-        // เวลาที่ขอไม่มีภาพ (ใหม่เกินไปหรือเก่าเกิน 4 ชม.) ใช้ภาพล่าสุดแทน
-        img.onerror = () => { if (time !== 'default') load('default'); else done(new Error('no cloud tile'), cv); };
-        img.src = `${GIBS}${time}/GoogleMapsCompatible_Level6/${coords.z}/${coords.y}/${coords.x}.png`;
-      };
-      load(this._time);
+      const sh = this.options.shift;
+      const job = sh ? warpTile(this._time, coords, sh) : cloudTile(this._time, coords.z, coords.x, coords.y);
+      job.then((im) => {
+        if (!im) { done(new Error('no cloud tile'), cv); return; }
+        cv.getContext('2d').putImageData(im, 0, 0);
+        done(null, cv);
+      }, (e) => done(e, cv));
       return cv;
     },
   });
 
   // เก็บชั้นเมฆแยกตามเวลา โหลดล่วงหน้าไว้แบบโปร่งใส แล้วสลับด้วย opacity
   // (ถ้าล้างแล้วโหลด tile ใหม่ทุกเฟรม ภาพจะกระพริบตอนเล่น)
-  function CloudStack(map) {
-    const OP = 0.9, layers = new Map();     // time -> { layer, loaded }
+  // key = เวลาภาพดาวเทียม หรือ "เวลา@..." สำหรับเมฆที่เลื่อนไปข้างหน้า: shiftFor(key) คืนฟังก์ชันระยะเลื่อน
+  function CloudStack(map, shiftFor) {
+    const OP = 0.9, layers = new Map();     // key -> { layer, loaded }
     let want = null, shown = null, on = false;
     function ensure(t) {
       let e = layers.get(t);
       if (!e) {
-        const layer = new CloudLayer({ opacity: 0 });
-        layer._time = t;
+        const layer = new CloudLayer({ opacity: 0, shift: shiftFor ? shiftFor(t) : null });
+        layer._time = t.split('@')[0];
         e = { layer, loaded: false };
         layer.on('load', () => { e.loaded = true; if (on && want === t) swap(t); });
         layers.set(t, e);

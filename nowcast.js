@@ -172,6 +172,13 @@ window.RainNowcast = (() => {
     return out;
   }
 
+  // ระยะเลื่อน ณ ตำแหน่ง (wx, wy) หน่วยสัดส่วนของโลก (0..1 แบบ Web Mercator) หลัง k ขั้น ใช้เลื่อนภาพเมฆ
+  function shiftAt(f, perStep, k, wx, wy, out) {
+    fieldAt(f, wx * WORLD - GX0, wy * WORLD - GY0, perStep, out);
+    out[0] = (out[0] * k) / WORLD; out[1] = (out[1] * k) / WORLD;
+    return out;
+  }
+
   // ---- วาดเป็นภาพสี ----
   function render(codes, colors) {
     const lut = new Uint8Array(256 * 4), th = LEVELS.map((r) => 23 + 16 * Math.log10(r));
@@ -210,5 +217,5 @@ window.RainNowcast = (() => {
 
   const kmPerPx = (lat) => (40075 * Math.cos((lat * Math.PI) / 180)) / WORLD;
 
-  return { index, loadFrame, shrink, motion, advect, render, sample, rateOf, kmPerPx, BOUNDS, LEVELS, STEP_MIN, N_FC, W, H, DS };
+  return { index, loadFrame, shrink, motion, advect, shiftAt, render, sample, rateOf, kmPerPx, BOUNDS, LEVELS, STEP_MIN, N_FC, W, H, DS };
 })();
