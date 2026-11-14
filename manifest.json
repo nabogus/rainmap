@@ -1,0 +1,11 @@
+{
+  "name": "RainMap | แผนที่ฝนและอากาศ",
+  "short_name": "RainMap",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "lang": "th"
+}

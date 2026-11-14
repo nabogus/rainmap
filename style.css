@@ -92,3 +92,36 @@ input[type=range]{width:100%;margin:6px 0 2px}
 .legend .tbar-l{display:flex;justify-content:space-between;max-width:150px;font-size:10px;color:var(--mute)}
 .map-lbl .tv{margin-left:3px;font-weight:700;color:#ffe08a}
 .light .map-lbl .tv{color:#b45309}
+
+/* ---------- มือถือ: แผนที่เต็มพื้นที่ แผงควบคุมลอยโปร่งใสที่ขอบล่างของแผนที่ ---------- */
+body.mobile .note{display:none}
+body.mobile .top{padding:2px 8px 0}
+body.mobile .tab{padding:8px 10px;font-size:14px}
+body.mobile #map{margin:0;border-radius:0;box-shadow:none}
+body.mobile .page.active{position:absolute;left:8px;right:8px;bottom:8px;z-index:800}
+body.mobile .ctrl{margin:0;padding:6px 8px 4px;background:rgba(255,255,255,.38);box-shadow:0 1px 6px rgba(0,0,0,.18);
+  -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,.45)}
+body.mobile .ctrl .small{display:none}
+body.mobile .ctrl .small.err{display:block;color:var(--red)}
+body.mobile .slider-lbl{display:none}
+body.mobile .src-row{margin-top:6px}
+body.mobile .slider-wrap{margin-top:2px}
+body.mobile input[type=range]{margin:4px 0 0}
+body.mobile .btn,body.mobile .seg button,body.mobile .chips button{background:rgba(255,255,255,.72)}
+body.mobile .btn.play{background:var(--blue)}
+body.mobile .seg button.active{background:var(--blue)}
+body.mobile .chips button.active{background:rgba(230,240,255,.92)}
+body.mobile .seg{border-color:rgba(0,0,0,.12)}
+body.mobile .ticks{font-size:11px;color:var(--ink)}
+body.mobile .big{font-size:16px}
+body.mobile .legend{position:absolute;left:10px;right:auto;top:132px;bottom:auto;z-index:800;background:rgba(255,255,255,.85);padding:6px 8px}
+body.mobile .foot{padding:3px 8px calc(4px + env(safe-area-inset-bottom));font-size:10px}
+body.mobile .toast{bottom:auto;top:110px}
+/* ล็อกแนวตั้ง: เบราว์เซอร์มือถือส่วนใหญ่ (โดยเฉพาะ iPhone) ไม่ให้เว็บล็อกการหมุนจอ จึงปิดหน้าแนวนอนด้วยข้อความ */
+.rotate{display:none}
+@media (orientation:landscape) and (max-height:500px) and (pointer:coarse){
+  .rotate{display:flex;position:fixed;inset:0;z-index:2000;background:var(--panel);align-items:center;justify-content:center;text-align:center;
+    font-size:17px;font-weight:600;color:var(--ink)}
+  .rotate b{display:block;font-size:44px;color:var(--blue);margin-bottom:6px}
+  .rotate small{font-weight:400;color:var(--mute);font-size:13px}
+}

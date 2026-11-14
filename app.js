@@ -113,9 +113,11 @@
     if (!st.frames.length) {
       sl.max = 0; $('nowTicks').innerHTML = ''; $('nowTime').textContent = '--:--';
       $('nowKind').textContent = st.error ? 'โหลดไม่ได้: ' + st.error : 'กำลังโหลด';
+      $('nowKind').classList.toggle('err', !!st.error);
       b.textContent = st.error ? 'ไม่มีข้อมูล' : 'กำลังโหลด'; b.className = 'badge stale';
       return;
     }
+    $('nowKind').classList.remove('err');
     sl.max = st.frames.length - 1;
     $('nowTicks').innerHTML = `<span>${fmtTime(st.frames[0].time)}</span><b>ตอนนี้ ${fmtTime(st.latest)}</b><span>${fmtTime(st.frames[st.frames.length - 1].time)}</span>`;
     const ageMin = (Date.now() - new Date(st.latest)) / 60000;
@@ -723,12 +725,35 @@
   }
   document.querySelectorAll('.tab').forEach((t) => { t.onclick = () => showPage(t.dataset.page); });
 
+  // ---------- มือถือ ----------
+  // จอแคบ: แผนที่เต็มพื้นที่ ย้ายแผงควบคุมไปลอยโปร่งใสที่ขอบล่างของแผนที่ และย้ายคำอธิบายสีไปมุมซ้ายบน
+  // จอกว้าง (คอมพิวเตอร์) คงแบบเดิม
+  const mq = window.matchMedia('(max-width: 767px)');
+  const floating = [$('page-now'), $('page-fc'), $('legend')];
+  floating.forEach((el) => { L.DomEvent.disableClickPropagation(el); L.DomEvent.disableScrollPropagation(el); });
+  function layoutMobile() {
+    const mobile = mq.matches, box = map.getContainer();
+    document.body.classList.toggle('mobile', mobile);
+    floating.forEach((el) => {
+      if (mobile) box.appendChild(el);
+      else if (el.id === 'legend') box.after(el);
+      else box.before(el);
+    });
+    if (!mobile) box.before($('page-now'), $('page-fc'));   // คงลำดับ now แล้ว fc
+    map.attributionControl.setPosition(mobile ? 'topright' : 'bottomright');
+    setTimeout(() => map.invalidateSize(), 50);
+  }
+  mq.addEventListener ? mq.addEventListener('change', layoutMobile) : mq.addListener(layoutMobile);
+  layoutMobile();
+  // ล็อกแนวตั้ง: ทำได้จริงเฉพาะเมื่อเบราว์เซอร์ยอม (เช่น Android ที่เพิ่มลงหน้าโฮม) เครื่องอื่นใช้หน้าบอกให้หมุนกลับใน style.css
+  try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock('portrait').catch(() => {}); } catch (e) { /* เบราว์เซอร์ไม่รองรับ */ }
+
   // ---------- เริ่ม ----------
   (async () => {
     const want = location.hash === '#fc' ? 'fc' : 'now';
     nowHeader(); nowLegend(); applyLayers();
     const pn = loadNow();
-    const pf = loadFc().then(() => applyLayers()).catch((e) => { $('fcKind').textContent = 'โหลด forecast ไม่ได้: ' + e.message; });
+    const pf = loadFc().then(() => applyLayers()).catch((e) => { $('fcKind').textContent = 'โหลด forecast ไม่ได้: ' + e.message; $('fcKind').classList.add('err'); });
     if (want === 'fc') { await pf; showPage('fc'); }
     else { fitThailandOnce('now'); credits(); }
     await Promise.all([pn, pf]);

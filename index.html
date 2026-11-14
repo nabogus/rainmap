@@ -2,7 +2,11 @@
 <html lang="th">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.json">
 <title>RainMap | แผนที่ฝนและอากาศ</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
@@ -87,6 +91,7 @@
 <div id="legend" class="legend"></div>
 <div id="toast" class="toast" role="status"></div>
 <footer id="foot" class="foot"></footer>
+<div id="rotate" class="rotate"><div><b>&#8635;</b>หมุนโทรศัพท์เป็นแนวตั้ง<br><small>แผนที่ออกแบบให้ดูแนวตั้งบนมือถือ</small></div></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
