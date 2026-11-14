@@ -7,7 +7,7 @@ window.RainLayers = (() => {
   // แปลงเป็นเมฆสีขาวโปร่งแสง เพื่อวางทับแผนที่และชั้นฝนได้
   const GIBS = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/Himawari_AHI_Band13_Clean_Infrared/default/';
   const CloudLayer = L.GridLayer.extend({
-    options: { maxNativeZoom: 6, minZoom: 2, maxZoom: 12, opacity: 0.9, attribution: 'Himawari / NASA GIBS', zIndex: 5, className: 'cloud-tiles' },
+    options: { pane: 'cloudPane', maxNativeZoom: 6, minZoom: 2, maxZoom: 12, opacity: 0.9, attribution: 'Himawari / NASA GIBS', zIndex: 5, className: 'cloud-tiles' },
     _time: 'default',
     setTime(t) { t = t || 'default'; if (t === this._time) return; this._time = t; if (this._map) this.redraw(); },
     // ภาพต้นทางละเอียดประมาณ 2 กม. ต่อจุด (ซูม 6) ซูมเข้ากว่านั้นจะเห็นเป็นบล็อก จึงเกลี่ยทั้งชั้นด้วย blur ตามระดับซูม

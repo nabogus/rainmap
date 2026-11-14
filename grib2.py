@@ -29,6 +29,8 @@ class Message:
     stat_type: int            # 1 = accumulation
     cat: int = 0              # parameter category (เช่น 1 = ความชื้น, 2 = โมเมนตัม, 3 = มวล)
     num: int = 0              # parameter number (APCP = 1/8, UGRD = 2/2, VGRD = 2/3, PRMSL = 3/1)
+    level_type: int = 0       # ชนิดระดับ (1 = ผิวพื้น, 101 = ระดับน้ำทะเล, 103 = ความสูงเหนือพื้นดิน)
+    level_value: float = 0.0  # ค่าระดับ เช่น 2 (เมตร) เมื่อ level_type = 103
     values: list = field(default_factory=list)   # เรียงตาม scan (แถวแรก = lat1)
 
     @property
@@ -40,6 +42,10 @@ def _s16(b: bytes) -> int:
     """int16 แบบ sign-magnitude ตามสเปก GRIB2"""
     v = struct.unpack('>H', b)[0]
     return -(v & 0x7FFF) if v & 0x8000 else v
+
+
+def _s8(v: int) -> int:
+    return -(v & 0x7F) if v & 0x80 else v
 
 
 def _s32(b: bytes) -> int:
@@ -80,6 +86,7 @@ def _parse_message(m: bytes) -> Message:
     grid = None
     fh = rng = stat = None
     cat = num = 0
+    lvt, lvv = 0, 0.0
     ref = scale_e = scale_d = nbits = None
     npts = 0
     bitmap = None
@@ -107,6 +114,8 @@ def _parse_message(m: bytes) -> Message:
             if tmpl not in (8, 0):
                 raise ValueError('product template %d ไม่รองรับ' % tmpl)
             cat, num = s[9], s[10]
+            lvt = s[22]
+            lvv = struct.unpack('>I', s[24:28])[0] / (10 ** _s8(s[23]))
             unit = s[17]
             fh = struct.unpack('>I', s[18:22])[0]
             if unit == 1:       # hour
@@ -159,7 +168,7 @@ def _parse_message(m: bytes) -> Message:
         pos += ln
     if grid is None or values is None:
         raise ValueError('ข้อความ GRIB ไม่ครบส่วน')
-    return Message(grid, fh, rng, stat, cat, num, values)
+    return Message(grid, fh, rng, stat, cat, num, lvt, lvv, values)
 
 
 def to_rows(msg: Message) -> list:
